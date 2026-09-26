@@ -60,6 +60,14 @@ $env:APP_MODE = "demo"
 .\.venv\Scripts\python.exe -m evaluation.run --live --limit 1
 ```
 
+想先看覆盖不同限制的小样本，可免费预览：
+
+```powershell
+.\.venv\Scripts\python.exe -m evaluation.run --pilot
+```
+
+确认愿意支付 API 调用费用后，才加 `--live --pilot`：它会测 4 组代表性场景（短时、普通项目、每周集中一天、英语限制），每组格式不合规或连接失败时最多重试一次。评分方法见[质量评测说明](docs/evaluation-guide.md)。
+
 真实评测将报告写到 `.learning_compass/evaluations/`：JSON 包含约束通过率、响应时间、token 用量和错误类别；CSV 留出任务可执行性、先修顺序的人工评分栏。最多可以运行 30 组。未经真实运行与人工评分，不应在简历上声称这些指标已达标。
 
 仓库中保留了[一次真实冒烟评测](docs/evaluation-sample.json)：1 个场景约束校验通过，耗时 3.744 秒，输入 819 / 输出 686 token。这不是 30 组场景的总体结论，任务质量也尚未完成人工评分。

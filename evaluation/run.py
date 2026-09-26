@@ -13,13 +13,29 @@ from statistics import median
 
 from dotenv import load_dotenv
 
-from evaluation.scenarios import build_scenarios
+from evaluation.scenarios import Scenario, build_scenarios
 from models import StudyPlan
 from planner import GenerationMetrics, PlanGenerationError, generate_study_plan
 
 
 OUTPUT_DIR = Path(__file__).parents[1] / ".learning_compass" / "evaluations"
 VAGUE_DELIVERABLES = {"掌握知识", "理解知识", "完成学习", "学习笔记"}
+PILOT_SCENARIO_IDS = (
+    "short-daily",
+    "goal2-days3-minutes45",
+    "long-weekly",
+    "limited-english",
+)
+
+
+def select_scenarios(limit: int, *, pilot: bool = False) -> list[Scenario]:
+    scenarios = build_scenarios()
+    if pilot:
+        by_id = {scenario.id: scenario for scenario in scenarios}
+        return [by_id[scenario_id] for scenario_id in PILOT_SCENARIO_IDS]
+    if not 1 <= limit <= len(scenarios):
+        raise ValueError(f"--limit 必须在 1 到 {len(scenarios)} 之间")
+    return scenarios[:limit]
 
 
 def inspect_plan(plan: StudyPlan) -> dict[str, int]:
@@ -34,8 +50,8 @@ def inspect_plan(plan: StudyPlan) -> dict[str, int]:
     }
 
 
-def run_live(limit: int, output_dir: Path = OUTPUT_DIR) -> Path:
-    scenarios = build_scenarios()[:limit]
+def run_live(limit: int, output_dir: Path = OUTPUT_DIR, *, pilot: bool = False) -> Path:
+    scenarios = select_scenarios(limit, pilot=pilot)
     output_dir.mkdir(parents=True, exist_ok=True)
     rows = []
     manual_rows = []
@@ -125,18 +141,28 @@ def run_live(limit: int, output_dir: Path = OUTPUT_DIR) -> Path:
 def main() -> None:
     parser = argparse.ArgumentParser(description="评测 Python 入门学习计划")
     parser.add_argument("--live", action="store_true", help="真实请求 DeepSeek，会消耗 API 额度")
-    parser.add_argument("--limit", type=int, default=1, help="真实请求的场景数，最多 30")
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--limit", type=int, default=1, help="真实请求的场景数，最多 30")
+    selection.add_argument(
+        "--pilot", action="store_true", help="选择 4 个不同限制的代表性场景；需加 --live 才调用 API"
+    )
     args = parser.parse_args()
     scenarios = build_scenarios()
+    try:
+        selected = select_scenarios(args.limit, pilot=args.pilot)
+    except ValueError as error:
+        parser.error(str(error))
     if not args.live:
-        print(f"已验证 {len(scenarios)} 个场景；使用 --live 才会调用模型。")
+        if args.pilot:
+            print(f"代表性小样本：{', '.join(scenario.id for scenario in selected)}")
+            print("仅预览场景；加 --live 后才会调用模型，最多 4 组、每组可能重试一次。")
+        else:
+            print(f"已验证 {len(scenarios)} 个场景；使用 --live 才会调用模型。")
         return
     load_dotenv()
     if not os.getenv("DEEPSEEK_API_KEY"):
         parser.error("未找到 DEEPSEEK_API_KEY，请先配置 .env")
-    if not 1 <= args.limit <= len(scenarios):
-        parser.error("--limit 必须在 1 到 30 之间")
-    print(f"评测报告：{run_live(args.limit)}")
+    print(f"评测报告：{run_live(args.limit, pilot=args.pilot)}")
 
 
 if __name__ == "__main__":
