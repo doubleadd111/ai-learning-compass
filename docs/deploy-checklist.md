@@ -2,7 +2,9 @@
 
 当前 GitHub 仓库：https://github.com/doubleadd111/ai-learning-compass
 
-2026-09-26 已部署公开样例：https://ai-learning-compass-g4awbdngukgkydhe5rzcnp.streamlit.app/ 。首页截图与 HTTP 200 已确认；完整的浏览器交互验收仍待执行。以下步骤保留供重新部署或练习。
+2026-09-26 已部署公开样例：https://ai-learning-compass-g4awbdngukgkydhe5rzcnp.streamlit.app/ 。首页截图与 HTTP 200 已确认。用户随后在公开页面完成每日记录、第一周复盘及计划调整，下载 JSON 后在新标签页导入，页面恢复“已完成 2/6 个学习日”。这是手动验收记录，不代表已完成跨浏览器、移动端或全量模型质量评测。以下步骤保留供重新部署或练习。
+
+同日补充自动回归：用全新公开会话导入已复盘的计划，验证完成 2/6 天、延期任务、笔记和复盘均恢复；本机完整测试 39 项通过。文件上传控件的真实浏览器路径由上述手动验收覆盖。
 
 本次先上线无需 API 的样例，不填写 `DEEPSEEK_API_KEY`、邀请码或数据库连接。公开访客可以完成每日记录、复盘和 JSON 导出导入；真实生成暂时关闭，不会产生模型调用费用。
 
