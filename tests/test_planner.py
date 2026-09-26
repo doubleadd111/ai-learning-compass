@@ -2,6 +2,8 @@ import json
 from types import SimpleNamespace
 
 import pytest
+import httpx
+from openai import APIConnectionError, APIStatusError, RateLimitError
 
 from models import LearningProfile
 from planner import (
@@ -135,3 +137,50 @@ def test_invalid_output_after_retry_is_user_friendly() -> None:
     client = FakeClient(["not json", "still not json"])
     with pytest.raises(PlanGenerationError, match="格式或时长"):
         generate_study_plan(profile(), client=client)
+
+
+def test_network_failure_retries_once_then_shows_safe_message() -> None:
+    client = FakeClient([])
+    calls = []
+
+    def fail(**kwargs):
+        calls.append(kwargs)
+        raise APIConnectionError(request=httpx.Request("POST", "https://example.invalid"))
+
+    client.responses.create = fail
+    with pytest.raises(PlanGenerationError, match="检查网络") as caught:
+        generate_study_plan(profile(), client=client)
+    assert len(calls) == 2
+    assert "example.invalid" not in str(caught.value)
+
+
+def test_rate_limit_does_not_expose_provider_error() -> None:
+    client = FakeClient([])
+    collected = []
+
+    def fail(**kwargs):
+        response = httpx.Response(
+            429, request=httpx.Request("POST", "https://example.invalid")
+        )
+        raise RateLimitError("secret-provider-detail", response=response, body=None)
+
+    client.responses.create = fail
+    with pytest.raises(PlanGenerationError, match="请求过于频繁") as caught:
+        generate_study_plan(profile(), client=client, on_metrics=collected.append)
+    assert "secret-provider-detail" not in str(caught.value)
+    assert collected[0].error_category == "rate_limit"
+
+
+def test_invalid_api_key_has_actionable_message() -> None:
+    client = FakeClient([])
+
+    def fail(**kwargs):
+        response = httpx.Response(
+            401, request=httpx.Request("POST", "https://example.invalid")
+        )
+        raise APIStatusError("provider-private-detail", response=response, body=None)
+
+    client.responses.create = fail
+    with pytest.raises(PlanGenerationError, match="API Key 是否有效") as caught:
+        generate_study_plan(profile(), client=client)
+    assert "provider-private-detail" not in str(caught.value)

@@ -192,7 +192,23 @@ def generate_study_plan(
             except RateLimitError as error:
                 error_category = "rate_limit"
                 raise PlanGenerationError("请求过于频繁或额度暂不可用，请稍后再试。") from error
-            except (APIConnectionError, APIStatusError) as error:
+            except APIStatusError as error:
+                if error.status_code in {401, 403}:
+                    error_category = "authentication"
+                    raise PlanGenerationError(
+                        "模型服务拒绝了请求，请检查 API Key 是否有效。"
+                    ) from error
+                if error.status_code == 402:
+                    error_category = "quota"
+                    raise PlanGenerationError(
+                        "模型服务账户额度不足，请检查服务商账户。"
+                    ) from error
+                if attempt == 1:
+                    error_category = "service"
+                    raise PlanGenerationError(
+                        "模型服务暂不可用，请稍后重试。"
+                    ) from error
+            except APIConnectionError as error:
                 if attempt == 1:
                     error_category = "connection"
                     raise PlanGenerationError("暂时无法连接模型服务，请检查网络后重试。") from error
