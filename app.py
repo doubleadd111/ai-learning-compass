@@ -277,7 +277,8 @@ def metrics_recorder(
 
 
 def main() -> None:
-    demo_mode = os.getenv("APP_MODE", "local") == "demo"
+    # 只有明确选择 local 才读写本机 SQLite；公开部署缺少配置时安全地展示会话样例。
+    demo_mode = os.getenv("APP_MODE", "demo") != "local"
     sample_plan_id: str | None = None
     if demo_mode:
         st.session_state.setdefault("demo_store", {})

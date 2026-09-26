@@ -64,7 +64,7 @@ $env:APP_MODE = "demo"
 
 ## 公开部署准备
 
-推荐部署到 Streamlit Community Cloud，入口文件为 `app.py`，Python 版本选择 3.11 或更新版本。公开应用设置 `APP_MODE="demo"`。未配置真实生成时，样例可以独立运行。
+推荐部署到 Streamlit Community Cloud，入口文件为 `app.py`，Python 版本选择 3.11 或更新版本。公开应用设置 `APP_MODE="demo"`；即使忘记设置，默认也是仅按会话保存的样例模式，不会启用本机 SQLite。未配置真实生成时，样例可以独立运行。
 
 若要开放受限真实生成：
 
@@ -73,6 +73,8 @@ $env:APP_MODE = "demo"
 3. 先用少量邀请码测试额度达到上限时是否拒绝；公开页面只提供样例，把邀请码单独给需要试用真实生成的人。
 
 参见 [Streamlit 部署说明](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/deploy)和[密钥管理](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management)。云端数据库、邀请码和 API 调用可能产生费用，具体额度需以服务商当前规则为准。
+
+第一次发布可按[逐项填写清单](docs/deploy-checklist.md)先上线无需 API 的公开样例，确认完整流程后再决定是否开放真实生成。
 
 ## 项目结构与学习点
 

@@ -8,6 +8,7 @@ from tests.test_progress_store import sample_plan, sample_profile
 
 
 def test_saved_plan_can_record_a_day(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("APP_MODE", "local")
     database_path = tmp_path / "study.sqlite3"
     monkeypatch.setenv("STUDY_DB_PATH", str(database_path))
     repository = StudyRepository(database_path)
@@ -34,6 +35,7 @@ def test_saved_plan_can_record_a_day(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_final_week_review_needs_no_api(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("APP_MODE", "local")
     database_path = tmp_path / "study.sqlite3"
     monkeypatch.setenv("STUDY_DB_PATH", str(database_path))
     repository = StudyRepository(database_path)
@@ -83,7 +85,21 @@ def test_public_sample_reviews_without_key_or_database(monkeypatch) -> None:
     assert "完成 3/3 天" in app.session_state["demo_store"]["reviews"][(plan_id, 1)]
 
 
+def test_missing_mode_defaults_to_session_only_sample(tmp_path: Path, monkeypatch) -> None:
+    database_path = tmp_path / "should-not-exist.sqlite3"
+    monkeypatch.delenv("APP_MODE", raising=False)
+    monkeypatch.setenv("STUDY_DB_PATH", str(database_path))
+    monkeypatch.setattr("dotenv.load_dotenv", lambda: None)
+
+    app = AppTest.from_file(Path(__file__).parents[1] / "app.py", default_timeout=10).run()
+
+    assert not app.exception
+    assert "sample_plan_id" in app.session_state
+    assert not database_path.exists()
+
+
 def test_form_generation_saves_new_plan(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("APP_MODE", "local")
     database_path = tmp_path / "study.sqlite3"
     monkeypatch.setenv("STUDY_DB_PATH", str(database_path))
 
