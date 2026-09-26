@@ -1,0 +1,12 @@
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*.egg-info/
+.streamlit/secrets.toml
+task_plan.md
+findings.md
+progress.md
+.learning_compass/
+.firecrawl/
