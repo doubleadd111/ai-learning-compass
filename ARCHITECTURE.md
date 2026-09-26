@@ -31,4 +31,4 @@ flowchart LR
 
 - 公开样例记录属于当前会话；使用 JSON 下载和导入跨会话继续。
 - 评测框架提供 30 组固定输入与人工评分表；真实模型表现需运行评测后才能填写。
-- 尚需项目仓库与 Streamlit Community Cloud 账号完成在线发布，并配置云端 Secrets；代码本身不含这些凭据。
+- 公开样例已部署在 [Streamlit Community Cloud](https://ai-learning-compass-g4awbdngukgkydhe5rzcnp.streamlit.app/)；未配置云端 Secrets，因此不开放付费真实生成。代码本身不含这些凭据。

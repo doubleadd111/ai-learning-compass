@@ -2,6 +2,8 @@
 
 当前 GitHub 仓库：https://github.com/doubleadd111/ai-learning-compass
 
+2026-09-26 已部署公开样例：https://ai-learning-compass-g4awbdngukgkydhe5rzcnp.streamlit.app/ 。首页截图与 HTTP 200 已确认；完整的浏览器交互验收仍待执行。以下步骤保留供重新部署或练习。
+
 本次先上线无需 API 的样例，不填写 `DEEPSEEK_API_KEY`、邀请码或数据库连接。公开访客可以完成每日记录、复盘和 JSON 导出导入；真实生成暂时关闭，不会产生模型调用费用。
 
 1. 打开 [Streamlit Community Cloud](https://share.streamlit.io/)，用 GitHub 账号 `doubleadd111` 登录。如果页面要求连接 GitHub，按页面说明自行授权；不要把授权码或密钥发给他人。
