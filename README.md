@@ -66,7 +66,7 @@ $env:APP_MODE = "demo"
 .\.venv\Scripts\python.exe -m evaluation.run --pilot
 ```
 
-确认愿意支付 API 调用费用后，才加 `--live --pilot`：它会测 4 组代表性场景（短时、普通项目、每周集中一天、英语限制），每组格式不合规或连接失败时最多重试一次。评分方法见[质量评测说明](docs/evaluation-guide.md)。
+确认愿意支付 API 调用费用后，才加 `--live --pilot`：它会测 4 组代表性场景（短时、普通项目、每周集中一天、英语限制），程序每组最多修正重试一次；底层 SDK 还可能自动重试，因此不能把调用次数当作费用上限。评分方法见[质量评测说明](docs/evaluation-guide.md)。
 
 真实评测将报告写到 `.learning_compass/evaluations/`：JSON 包含约束通过率、响应时间、token 用量和错误类别；CSV 留出任务可执行性、先修顺序的人工评分栏。最多可以运行 30 组。未经真实运行与人工评分，不应在简历上声称这些指标已达标。
 
