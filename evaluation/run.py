@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 
 from evaluation.scenarios import Scenario, build_scenarios
 from models import StudyPlan
-from planner import GenerationMetrics, PlanGenerationError, generate_study_plan
+from planner import GenerationMetrics, PlanGenerationError, _get_client, generate_study_plan
 
 
 OUTPUT_DIR = Path(__file__).parents[1] / ".learning_compass" / "evaluations"
@@ -53,17 +53,23 @@ def inspect_plan(plan: StudyPlan) -> dict[str, int]:
 def run_live(limit: int, output_dir: Path = OUTPUT_DIR, *, pilot: bool = False) -> Path:
     scenarios = select_scenarios(limit, pilot=pilot)
     output_dir.mkdir(parents=True, exist_ok=True)
+    # 评测额度可控：SDK 不再暗中重试；每组只由 planner 的两次尝试控制。
+    client = _get_client().with_options(max_retries=0)
     rows = []
     manual_rows = []
     for scenario in scenarios:
         measured: list[GenerationMetrics] = []
         try:
-            plan = generate_study_plan(scenario.profile, on_metrics=measured.append)
+            plan = generate_study_plan(
+                scenario.profile, client=client, on_metrics=measured.append
+            )
             quality = inspect_plan(plan)
             rows.append(
                 {
                     "scenario": scenario.id,
                     "passed": True,
+                    "profile": scenario.profile.model_dump(mode="json"),
+                    "plan": plan.model_dump(mode="json"),
                     "quality": quality,
                     "metrics": measured[0].__dict__ if measured else None,
                 }
@@ -77,6 +83,7 @@ def run_live(limit: int, output_dir: Path = OUTPUT_DIR, *, pilot: bool = False) 
                             "day": task.day,
                             "title": task.title,
                             "description": task.description,
+                            "duration_minutes": task.duration_minutes,
                             "deliverable": task.deliverable,
                             "可执行性评分_1到5": "",
                             "先修顺序合理_是或否": "",
@@ -88,6 +95,8 @@ def run_live(limit: int, output_dir: Path = OUTPUT_DIR, *, pilot: bool = False) 
                 {
                     "scenario": scenario.id,
                     "passed": False,
+                    "profile": scenario.profile.model_dump(mode="json"),
+                    "plan": None,
                     "quality": None,
                     "metrics": measured[0].__dict__ if measured else None,
                 }
@@ -106,6 +115,7 @@ def run_live(limit: int, output_dir: Path = OUTPUT_DIR, *, pilot: bool = False) 
     )
     report = {
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "sdk_max_retries": 0,
         "scenario_count": len(rows),
         "passed_count": len(successful),
         "constraint_pass_rate": round(len(successful) / len(rows), 3) if rows else None,
@@ -129,7 +139,8 @@ def run_live(limit: int, output_dir: Path = OUTPUT_DIR, *, pilot: bool = False) 
         writer = csv.DictWriter(
             file,
             fieldnames=[
-                "scenario", "week", "day", "title", "description", "deliverable",
+                "scenario", "week", "day", "title", "description", "duration_minutes",
+                "deliverable",
                 "可执行性评分_1到5", "先修顺序合理_是或否", "备注",
             ],
         )

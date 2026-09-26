@@ -1,8 +1,12 @@
+import csv
+import json
+
 import pytest
 
 import evaluation.run as evaluation_run
 from evaluation.run import PILOT_SCENARIO_IDS, inspect_plan, select_scenarios
 from evaluation.scenarios import build_scenarios
+from planner import GenerationMetrics
 from tests.test_progress_store import sample_plan
 
 
@@ -45,3 +49,36 @@ def test_pilot_preview_does_not_call_model(monkeypatch, capsys) -> None:
 
     output = capsys.readouterr().out
     assert all(scenario_id in output for scenario_id in PILOT_SCENARIO_IDS)
+
+
+def test_live_pilot_disables_sdk_retries_and_uses_four_scenarios(tmp_path, monkeypatch) -> None:
+    class FakeClient:
+        def with_options(self, *, max_retries):
+            assert max_retries == 0
+            return self
+
+    client = FakeClient()
+    calls = []
+
+    def fake_generate(profile, *, client, on_metrics):
+        assert client is expected_client
+        calls.append(profile)
+        on_metrics(GenerationMetrics(True, 1, 12, 10, 20))
+        return sample_plan()
+
+    expected_client = client
+    monkeypatch.setattr(evaluation_run, "_get_client", lambda: client)
+    monkeypatch.setattr(evaluation_run, "generate_study_plan", fake_generate)
+
+    report_path = evaluation_run.run_live(1, tmp_path, pilot=True)
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+
+    assert len(calls) == 4
+    assert report["sdk_max_retries"] == 0
+    assert [result["scenario"] for result in report["results"]] == list(PILOT_SCENARIO_IDS)
+    assert report["results"][0]["profile"]["days_per_week"] == 7
+    assert report["results"][0]["plan"]["weekly_plans"][0]["tasks"][0]["duration_minutes"] == 30
+    review_path = next(tmp_path.glob("human-review-*.csv"))
+    with review_path.open(encoding="utf-8-sig", newline="") as file:
+        review_rows = list(csv.DictReader(file))
+    assert review_rows[0]["duration_minutes"] == "30"
