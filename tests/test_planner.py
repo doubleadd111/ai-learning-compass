@@ -65,6 +65,14 @@ def test_prompt_contains_user_constraints() -> None:
     assert "每天最多学习：45 分钟" in prompt
 
 
+def test_python_curriculum_is_in_instructions() -> None:
+    from planner import build_instructions
+
+    instructions = build_instructions()
+    assert "变量、基本类型与输入" in instructions
+    assert instructions.index("条件判断") < instructions.index("循环")
+
+
 def test_request_schema_keeps_structure_but_not_local_range_keywords() -> None:
     encoded_schema = json.dumps(STUDY_PLAN_SCHEMA, ensure_ascii=False)
     assert '"additionalProperties": false' in encoded_schema
@@ -77,6 +85,7 @@ def test_valid_json_plan_is_parsed() -> None:
     plan = generate_study_plan(profile(), client=client)
     assert plan.weekly_plans[0].tasks[0].title == "安装与打印"
     assert client.responses.calls[0]["store"] is False
+    assert client.responses.calls[0]["reasoning"] == {"effort": "none"}
 
 
 def test_invalid_json_retries_once_with_correction() -> None:
@@ -85,6 +94,41 @@ def test_invalid_json_retries_once_with_correction() -> None:
     assert plan.title == "Python 起步计划"
     assert len(client.responses.calls) == 2
     assert "未通过校验" in client.responses.calls[1]["input"]
+
+
+def test_generation_metrics_report_retry_without_raw_input() -> None:
+    collected = []
+    client = FakeClient(["not json", response_payload()])
+    generate_study_plan(profile(), client=client, on_metrics=collected.append)
+    assert collected[0].success is True
+    assert collected[0].attempts == 2
+    assert collected[0].latency_ms >= 0
+    assert collected[0].input_tokens is None
+
+
+def test_generation_metrics_report_final_failure() -> None:
+    collected = []
+    client = FakeClient(["not json", "still not json"])
+    with pytest.raises(PlanGenerationError):
+        generate_study_plan(profile(), client=client, on_metrics=collected.append)
+    assert collected[0].success is False
+    assert collected[0].error_category == "invalid_output"
+
+
+def test_generation_metrics_count_provider_tokens() -> None:
+    collected = []
+    client = FakeClient([response_payload()])
+    original_create = client.responses.create
+
+    def create_with_usage(**kwargs):
+        response = original_create(**kwargs)
+        response.usage = SimpleNamespace(input_tokens=123, output_tokens=456)
+        return response
+
+    client.responses.create = create_with_usage
+    generate_study_plan(profile(), client=client, on_metrics=collected.append)
+    assert collected[0].input_tokens == 123
+    assert collected[0].output_tokens == 456
 
 
 def test_invalid_output_after_retry_is_user_friendly() -> None:

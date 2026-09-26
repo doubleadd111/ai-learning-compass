@@ -73,6 +73,13 @@ def validate_plan_for_profile(plan: StudyPlan, profile: LearningProfile) -> None
                 f"第 {week.week_number} 周应安排 {profile.days_per_week} 个学习日"
             )
 
+        actual_days = sorted(task.day for task in week.tasks)
+        expected_days = list(range(1, profile.days_per_week + 1))
+        if actual_days != expected_days:
+            raise ValueError(
+                f"第 {week.week_number} 周的学习日必须从第 1 天连续到第 {profile.days_per_week} 天"
+            )
+
         total_minutes = sum(task.duration_minutes for task in week.tasks)
         if total_minutes > profile.weekly_minutes:
             raise ValueError(

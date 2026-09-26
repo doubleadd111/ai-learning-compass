@@ -1,74 +1,96 @@
-# 学习罗盘：AI 学习计划生成器
+# 学习罗盘：自适应 Python 学习教练
 
-一个面向零基础学习者的中文 Web 应用。填写目标、基础和可投入时间后，它会生成一份包含每周里程碑、每日任务与可检查产出的学习计划。
+面向零基础 Python 学习者：生成学习计划，记录每天是否完成、实际用时和难度；每周复盘后，根据延期任务与学习反馈调整后续计划。
 
-> 首版只在本机运行，不保存计划、不需要登录，也不会上传文件。
+目前本机模式可保存多份计划。公开演示模式有一份无需 API 的两周样例；真实生成需要服务器端邀请码和每日总额度。
 
-## 你会学到什么
+## 功能一览
 
-- **Python 项目结构**：把网页入口、数据模型、模型调用和测试拆分到不同文件。
-- **大模型 API 调用**：通过 OpenAI 兼容的 Python SDK 调用 DeepSeek Responses API。
-- **提示词设计**：将学习周期、可用时间和偏好写成模型必须遵守的约束。
-- **结构化输出**：要求模型按 JSON Schema 返回数据，再用 Pydantic 验证，避免界面依赖一大段不稳定文本。
-- **错误处理与测试**：API Key、网络和模型输出异常均给出可理解的提示；测试不调用真实 API。
+- **生成计划**：输入目标、基础、周数、每周天数、每天分钟数；DeepSeek 返回结构化 JSON，Pydantic 校验周次、任务数和时间上限，失败时修正重试一次。
+- **每日记录**：保存完成情况、实际用时、难度与笔记；本机使用 SQLite，重启后仍能继续。
+- **每周复盘**：必须先把本周任务标记为“已完成”或“延期”。延期任务优先进入下周；完成率低于 60% 或平均难度不低于 4 时，后续周次单日任务上限降低至原来的 80%（最低 15 分钟）。模型编写其余任务，程序再次校验上限。
+- **导出与导入**：下载 JSON 保存计划和记录；文件不包含 API Key。公开演示模式中的个人计划仅保留在当前浏览器会话，建议离开前下载。
+- **质量评测**：30 组 Python 入门场景；默认只检查评测输入，显式加 `--live` 才调用模型并生成报告。
 
-## 准备环境（Windows）
+## 在 Windows 本机运行
 
-1. 安装 [Python 3.11](https://www.python.org/downloads/)，安装时勾选 **Add Python to PATH**。
-2. 在项目目录打开 PowerShell，创建并激活虚拟环境：
-
-   ```powershell
-   py -3.11 -m venv .venv
-   .\.venv\Scripts\Activate.ps1
-   ```
-
-3. 安装依赖：
-
-   ```powershell
-   pip install -r requirements.txt
-   ```
-
-## 配置 DeepSeek API Key
-
-1. 复制 `.env.example` 并重命名为 `.env`。
-2. 打开 `.env`，填写你的 DeepSeek API Key：
-
-   ```env
-   DEEPSEEK_API_KEY=你的真实密钥
-   ```
-
-`.env` 已被 `.gitignore` 排除，**不要**把真实密钥放进代码或提交到 Git。
-
-## 启动
+需要 Python 3.11 或更新版本。从项目目录执行：
 
 ```powershell
-streamlit run app.py
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
-浏览器会打开本地页面。填完表单后点击“生成我的学习计划”；生成结果底部的代码块可一键复制为 Markdown。
-
-## 运行测试
+在 `.env` 中填写自己的 `DEEPSEEK_API_KEY`。不要把密钥发给别人或提交到 Git。然后启动：
 
 ```powershell
-pytest
+.\.venv\Scripts\streamlit.exe run app.py
 ```
 
-测试会验证表单边界、时间限制、JSON 解析，以及模型返回非 JSON 时自动修正重试一次的行为，不会消耗 API 额度。
+浏览器打开终端显示的本机地址。PowerShell 窗口运行着 Streamlit 服务；按 `Ctrl+C` 停止。
 
-## 项目结构
+计划与每日记录默认保存在 `.learning_compass/plans.sqlite3`，该目录已被 Git 忽略。可以设置 `STUDY_DB_PATH` 指定其他本机路径。
 
-```text
-app.py          # Streamlit 中文界面与 Markdown 导出
-models.py       # 表单与学习计划的 Pydantic 数据模型
-planner.py      # OpenAI Responses API、Schema 与二次校验
-tests/          # 不调用真实 API 的单元测试
-.env.example    # 密钥配置模板
+## 不使用 API 的公开样例模式
+
+在 PowerShell 中运行：
+
+```powershell
+$env:APP_MODE = "demo"
+.\.venv\Scripts\streamlit.exe run app.py
 ```
+
+样例会直接出现。把第一周的三天标记为“已完成”或“延期”，点击“生成本周复盘并调整后续计划”即可看到规则调整。此流程不调用模型。关闭标签页或重启服务器后，样例记录可能消失；可先下载 JSON，之后再导入。
+
+## 测试与评测
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m evaluation.run
+```
+
+第一条运行单元与 Streamlit 界面交互测试，不使用真实 API；第二条检查 30 组输入，也不使用真实 API。
+
+想测试真实模型时，先估算自己的 API 预算，再明确指定场景数：
+
+```powershell
+.\.venv\Scripts\python.exe -m evaluation.run --live --limit 1
+```
+
+真实评测将报告写到 `.learning_compass/evaluations/`：JSON 包含约束通过率、响应时间、token 用量和错误类别；CSV 留出任务可执行性、先修顺序的人工评分栏。最多可以运行 30 组。未经真实运行与人工评分，不应在简历上声称这些指标已达标。
+
+仓库中保留了[一次真实冒烟评测](docs/evaluation-sample.json)：1 个场景约束校验通过，耗时 3.744 秒，输入 819 / 输出 686 token。这不是 30 组场景的总体结论，任务质量也尚未完成人工评分。
+
+## 公开部署准备
+
+推荐部署到 Streamlit Community Cloud，入口文件为 `app.py`，Python 版本选择 3.11 或更新版本。公开应用设置 `APP_MODE="demo"`。未配置真实生成时，样例可以独立运行。
+
+若要开放受限真实生成：
+
+1. 准备托管 PostgreSQL，在其 SQL 控制台执行 [`deploy/demo_quota.sql`](deploy/demo_quota.sql)。
+2. 在云平台的 **Secrets** 中设置 `DEEPSEEK_API_KEY`、`APP_MODE="demo"`、`DEMO_INVITE_CODE`、`DEMO_DATABASE_URL`、`DEMO_DAILY_LIMIT`。不要提交这些真实值。数据库连接必须使用 TLS；额度统计在 PostgreSQL 中原子更新，数据库不可用时不放行请求。
+3. 先用少量邀请码测试额度达到上限时是否拒绝；公开页面只提供样例，把邀请码单独给需要试用真实生成的人。
+
+参见 [Streamlit 部署说明](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/deploy)和[密钥管理](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management)。云端数据库、邀请码和 API 调用可能产生费用，具体额度需以服务商当前规则为准。
+
+## 项目结构与学习点
+
+| 位置 | 作用 | 对应知识 |
+| --- | --- | --- |
+| `app.py` | 页面、表单、每日记录与复盘入口 | Streamlit、会话状态 |
+| `models.py`、`curriculum.py` | 计划数据结构和 Python 入门主题 | Pydantic、数据建模 |
+| `planner.py`、`weekly_review.py` | 调用模型、校验、规则调整 | API、结构化输出、约束校验 |
+| `progress_store.py`、`session_store.py` | 本机数据库与公开会话数据 | SQLite、持久化、隔离 |
+| `plan_transfer.py`、`demo_quota.py` | 导入导出和公开额度控制 | JSON、输入校验、数据库原子更新 |
+| `evaluation/`、`tests/` | 评测与自动测试 | Mock、回归测试、指标 |
+
+架构与数据流见 [`ARCHITECTURE.md`](ARCHITECTURE.md)。
+录制公开演示时可参考[两分钟演示脚本](docs/demo-script.md)；当前尚无已发布视频。
 
 ## 常见问题
 
-**提示“未找到 DeepSeek API Key”怎么办？** 检查 `.env` 是否和 `app.py` 位于同一目录，变量名必须为 `DEEPSEEK_API_KEY`；修改后重启 Streamlit。
-
-**计划比我的时间长怎么办？** 应用会校验每项任务与每周总时长，并让模型自动修正一次。仍不合适时，把每天时长或偏好写得更具体，再重新生成。
-
-**为什么要返回 JSON？** 界面需要知道“第几周、哪一天、花多久、完成什么”，结构化字段比从一整段自然语言中猜测更可靠。DeepSeek Responses API 支持 JSON Schema 格式输出。[官方文档](https://api-docs.deepseek.com/zh-cn/api/create-response/)
+- **未找到 API Key**：检查 `.env` 是否和 `app.py` 同目录、变量名是否为 `DEEPSEEK_API_KEY`，保存后重启应用。
+- **为什么公开样例不能随意真实生成**：每次真实生成消耗项目作者的 API 额度；公开样例无需调用模型。
+- **为什么关闭网页后记录不见了**：公开模式只在当前会话保存数据，离开前下载 JSON；本机模式使用 SQLite，可以重启后继续。
+- **计划不符合时长**：程序会重试并再次校验；仍失败会显示可理解的错误，不会把不合规计划保存下来。

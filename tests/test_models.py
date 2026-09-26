@@ -65,3 +65,11 @@ def test_weekly_tasks_require_unique_days() -> None:
                 DailyTask(day=1, title="任务二", description="第二项练习任务。", duration_minutes=20, deliverable="记录二"),
             ],
         )
+
+
+def test_each_week_days_restart_at_one() -> None:
+    plan = valid_plan()
+    plan.weekly_plans[0].tasks[0].day = 3
+    plan.weekly_plans[0].tasks[1].day = 4
+    with pytest.raises(ValueError, match="从第 1 天连续"):
+        validate_plan_for_profile(plan, profile())

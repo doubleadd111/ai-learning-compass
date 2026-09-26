@@ -1,0 +1,29 @@
+{
+  "note": "2026-09-26 的一次真实 DeepSeek 冒烟评测；并非 30 个场景的总体结果，也未完成人工评分。",
+  "scenario_count": 1,
+  "passed_count": 1,
+  "constraint_pass_rate": 1.0,
+  "median_latency_ms": 3744,
+  "input_tokens": 819,
+  "output_tokens": 686,
+  "error_categories": {},
+  "results": [
+    {
+      "scenario": "goal1-days2-minutes20",
+      "passed": true,
+      "quality": {
+        "task_count": 4,
+        "duplicate_title_count": 0,
+        "vague_deliverable_count": 0
+      },
+      "metrics": {
+        "success": true,
+        "attempts": 1,
+        "latency_ms": 3744,
+        "input_tokens": 819,
+        "output_tokens": 686,
+        "error_category": null
+      }
+    }
+  ]
+}
