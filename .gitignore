@@ -10,3 +10,8 @@ findings.md
 progress.md
 .learning_compass/
 .firecrawl/
+build/
+dist/
+release/
+.tools/
+*.spec.bak

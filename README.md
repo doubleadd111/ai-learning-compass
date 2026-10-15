@@ -1,4 +1,16 @@
-# 学习罗盘：自适应 Python 学习教练
+# 学习罗盘 2026.10
+
+中文 Windows 桌面学习计划软件：使用自己的 DeepSeek／OpenAI 兼容模型生成通用学习计划，记录进度、每周复盘，提供本机长期保存、备份、托盘提醒与专注计时。
+
+**桌面版下载：**[2026.10.0 公开试用版](https://github.com/doubleadd111/ai-learning-compass/releases/tag/2026.10.0) · [桌面版使用指南](docs/desktop-guide.md) · [验收记录](docs/desktop-verification.md)。安装后无需 Python 或 PowerShell。源码入口为 `run_desktop.py`，依赖使用 `requirements-desktop.txt`。
+
+桌面版数据固定保存到 `%LOCALAPPDATA%\LearningCompass`，密钥交给 Windows 凭据管理器。软件卸载或升级会保留数据；备份不包含 API Key。
+
+![桌面计划库](docs/images/desktop-library.png)
+
+桌面版模块关系与验证边界见 [桌面架构](docs/desktop-architecture.md)。网页版入口与依赖保持独立。
+
+## 原有 Streamlit 网页样例
 
 面向零基础 Python 学习者：生成学习计划，记录每天是否完成、实际用时和难度；每周复盘后，根据延期任务与学习反馈调整后续计划。
 
