@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from desktop.controls import SoftComboBox as QComboBox
+from desktop.calendar import configure_calendar
 
 from datetime import date
 from html import escape
@@ -24,6 +25,7 @@ def spin(low, high, value):
 def date_edit(value=None):
     widget = QDateEdit(value or QDate.currentDate())
     widget.setCalendarPopup(True)
+    configure_calendar(widget)
     widget.setDisplayFormat("yyyy-MM-dd")
     return widget
 

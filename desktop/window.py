@@ -588,6 +588,8 @@ class MainWindow(QMainWindow):
         worker = Worker(function, gateway.close if gateway else None)
         self.worker = worker
         self.active_gateway = gateway
+        self.last_diagnostic = None
+        self.diagnostic_button.hide()
         # 身份检查阻止已取消任务的排队信号污染新任务，即使信号已进入 Qt 事件队列。
         worker.signals.done.connect(lambda result: self.safe(lambda: done(result)) if self.worker is worker and not worker.cancelled.is_set() else None)
         worker.signals.failed.connect(lambda message: self.request_failed(worker, message))

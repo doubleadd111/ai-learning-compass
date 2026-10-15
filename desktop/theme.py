@@ -132,6 +132,18 @@ def apply_theme(app, choice="system"):
         QSpinBox::up-button, QTimeEdit::up-button {{ subcontrol-origin:border; subcontrol-position:top right; width:25px; border:0; background:transparent; }}
         QSpinBox::down-button, QTimeEdit::down-button {{ subcontrol-origin:border; subcontrol-position:bottom right; width:25px; border:0; background:transparent; }}
         QDateEdit::drop-down {{ border:0; width:28px; }}
+        QCalendarWidget#studyCalendar {{ background:transparent; border:0; }}
+        QCalendarWidget#studyCalendar QWidget#qt_calendar_navigationbar {{ background:transparent; }}
+        QCalendarWidget#studyCalendar QAbstractItemView {{ background:{card}; color:{ink}; selection-background-color:transparent; selection-color:{ink}; border:0; outline:0; padding:0; font-size:13px; }}
+        QToolButton#calendarArrow {{ background:transparent; border:0; border-radius:7px; padding:5px; min-width:22px; max-width:22px; min-height:22px; max-height:22px; }}
+        QToolButton#calendarArrow:hover, QToolButton#calendarArrow[hovered="true"] {{ background:{hover}; }}
+        QLineEdit#calendarYear, QComboBox#calendarMonth {{ background:transparent; border:1px solid transparent; border-radius:7px; padding:5px 6px; min-height:20px; max-height:20px; font-weight:600; }}
+        QComboBox#calendarMonth {{ padding-right:4px; }}
+        QComboBox#calendarMonth::drop-down {{ width:20px; }}
+        QLineEdit#calendarYear:hover, QComboBox#calendarMonth:hover {{ background:{hover}; border-color:{line}; }}
+        QLineEdit#calendarYear:focus, QComboBox#calendarMonth:focus {{ border-color:{accent}; }}
+        QPushButton#calendarToday {{ background:{hover}; color:{accent}; border:0; padding:4px 10px; min-height:20px; border-radius:7px; }}
+        QPushButton#calendarToday:hover, QPushButton#calendarToday[hovered="true"] {{ background:{selected}; }}
         QSpinBox::up-arrow, QTimeEdit::up-arrow {{ image:url("{assets}/up-{variant}.svg"); width:10px; height:7px; }}
         QSpinBox::down-arrow, QTimeEdit::down-arrow {{ image:url("{assets}/chevron-{variant}.svg"); width:10px; height:9px; }}
         QSpinBox::up-button:hover, QSpinBox::down-button:hover, QTimeEdit::up-button:hover, QTimeEdit::down-button:hover {{ background:{hover}; border-radius:5px; }}

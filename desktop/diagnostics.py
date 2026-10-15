@@ -18,6 +18,10 @@ class ConnectionDiagnostic(BaseModel):
     category: str
     exception_types: list[str]
     network_mode: Literal["system", "direct"] = "system"
+    api_type: Literal["responses", "chat"] | None = None
+    output_format: Literal["json_schema", "json_object"] | None = None
+    service_code: Literal["invalid_json_schema", "invalid_request_error", "unsupported_parameter", "unsupported_value", "model_not_found", "invalid_model", "not_found"] | None = None
+    error_field: Literal["json_schema", "output_format", "model", "output_tokens", "reasoning", "unknown"] | None = None
 
     def summary(self):
         labels = {"models": "获取模型列表", "connection_test": "JSON连接测试",
@@ -25,7 +29,31 @@ class ConnectionDiagnostic(BaseModel):
         return (f"操作：{labels.get(self.operation, self.operation)}\n阶段：{self.stage}\n"
                 f"耗时：{self.elapsed_ms} ms\nHTTP：{self.http_status if self.http_status is not None else '未收到'}\n"
                 f"类别：{self.category}\n路由：{'直连' if self.network_mode == 'direct' else '默认代理'}\n"
+                f"接口：{self.api_type or '未记录'} / {self.output_format or '未记录'}\n"
+                f"服务错误码：{self.service_code or '未记录'}\n参数类别：{self.error_field or '未记录'}\n"
                 f"异常类型：{' → '.join(self.exception_types) or '无'}")
+
+
+def api_error_details(error):
+    """Map structured SDK error metadata to fixed values, never copy raw text."""
+    body = getattr(error, "body", None)
+    if not isinstance(body, dict):
+        return {}
+    body = body.get("error", body)
+    if not isinstance(body, dict):
+        return {}
+    code = body.get("code")
+    known = {"invalid_json_schema", "invalid_request_error", "unsupported_parameter", "unsupported_value", "model_not_found", "invalid_model", "not_found"}
+    code = code if isinstance(code, str) and code in known else None
+    fields = {"text.format.schema": "json_schema", "response_format.json_schema.schema": "json_schema",
+              "json_schema": "json_schema", "response_format": "output_format", "text.format": "output_format",
+              "model": "model", "max_tokens": "output_tokens", "max_output_tokens": "output_tokens",
+              "max_completion_tokens": "output_tokens", "reasoning": "reasoning", "thinking": "reasoning"}
+    param = body.get("param")
+    field = fields.get(param, "unknown") if isinstance(param, str) else "unknown"
+    if code == "invalid_json_schema":
+        field = "json_schema"
+    return dict(service_code=code, error_field=field)
 
 
 def classify(error):

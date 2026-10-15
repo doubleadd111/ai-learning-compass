@@ -1,5 +1,6 @@
 """No real keys or external URLs: exercise the frozen gateway against loopback."""
 import json
+from datetime import date
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -45,12 +46,18 @@ def run_network_check(url, directory):
         config = ModelConnection(name="隔离网络自检", base_url=url, model="loopback-model", api_type=protocol, output_format="json_schema", network_mode=mode)
         gateway = ModelGateway(config, "loopback-placeholder-not-a-real-key")
         try:
-            for operation in ("models", "connection_test", "study_plan"):
+            for operation in ("models", "connection_test", "planning_clarification", "study_plan"):
                 try:
                     if operation == "models":
                         assert gateway.list_models() == ["loopback-model"]
                     elif operation == "connection_test":
                         gateway.test()
+                    elif operation == "planning_clarification":
+                        from desktop.planning import PlanningDraft
+                        draft = PlanningDraft(profile=profile, start_date=date.today(),
+                                              weekdays=list(range(profile.days_per_week)), quick=True, connection=config)
+                        turn, _event = gateway.clarify(draft)
+                        assert turn.decision == "outline"
                     else:
                         gateway.generate(profile)
                     success = True

@@ -10,9 +10,9 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI, 
 
 from curriculum import curriculum_prompt
 from models import StudyPlan, validate_plan_for_profile
-from planner import STUDY_PLAN_SCHEMA
+from planner import STUDY_PLAN_SCHEMA, _make_strict_schema
 from desktop.models import DesktopProfile, ModelConnection
-from desktop.diagnostics import ConnectionDiagnostic, MESSAGES, classify
+from desktop.diagnostics import ConnectionDiagnostic, MESSAGES, classify, api_error_details
 from desktop.network import (Cancelled, CancellableTransport, RequestControl,
                              TEST_TIMEOUT, MODELS_TIMEOUT, GENERATE_TIMEOUT)
 
@@ -64,8 +64,13 @@ def friendly_error(error):
             return "模型服务拒绝访问，请检查这套配置的 API Key 和权限。", "authentication"
         if error.status_code == 402:
             return "模型服务余额不足，请到服务商账户检查额度。", "quota"
-        if error.status_code in {400, 404, 422}:
-            return "服务地址、模型名或接口参数不受支持。请核对接口类型、JSON格式和高级参数。", "unsupported"
+        if error.status_code == 404:
+            return "服务未找到所选模型或接口（HTTP 404）。请核对模型 ID、服务地址和接口类型；获取列表成功不等于该接口可用。", "unsupported"
+        if error.status_code in {400, 422}:
+            details = api_error_details(error)
+            if details.get("error_field") == "json_schema":
+                return "服务拒绝了 JSON Schema 输出结构。请使用最新版继续草稿；若服务仍不支持，手动改用JSON模式并在草稿中重新绑定模型。F1指南“创建计划参数错误”有处理步骤。", "unsupported"
+            return f"服务拒绝了生成参数（HTTP {error.status_code}）。请复制这次失败的连接诊断，核对接口类型、输出格式与输出上限字段。F1指南“创建计划参数错误”有处理步骤；草稿仍保留。", "unsupported"
         return "模型服务暂时不可用，请稍后再试。", "service"
     return "模型调用失败，请检查配置后重试。", "unknown"
 
@@ -97,6 +102,7 @@ class ModelGateway:
         self.control.operation = operation
         category, names = "success", []
         status = None
+        details = {}
         try:
             return function()
         except Cancelled:
@@ -105,16 +111,21 @@ class ModelGateway:
         except Exception as error:
             category, names = classify(error)
             status = getattr(error, "status_code", None)
+            details = api_error_details(error)
             if isinstance(error, (APIStatusError, APIConnectionError)):
                 raise
             raise GatewayError(MESSAGES.get(category, "模型请求未完成，请复制连接诊断并检查配置。")) from None
         finally:
             self.last_diagnostic = ConnectionDiagnostic(operation=operation, stage=self.control.stage,
                 elapsed_ms=round((perf_counter() - started) * 1000), http_status=self.control.response_status or status,
-                category=category, exception_types=names, network_mode=self.connection.network_mode)
+                category=category, exception_types=names, network_mode=self.connection.network_mode,
+                api_type=self.connection.api_type, output_format=self.connection.output_format, **details)
 
     def _request(self, system, prompt, schema, name, max_tokens):
         config = self.connection
+        schema = _make_strict_schema(schema)
+        if config.output_format == "json_object":
+            prompt += "\n只返回JSON对象，结构必须符合以下JSON Schema（仍由本机完整校验）：\n" + json.dumps(schema, ensure_ascii=False)
         if config.api_type == "responses":
             fmt = {"type": config.output_format}
             if config.output_format == "json_schema":
@@ -197,18 +208,7 @@ class ModelGateway:
         metrics = {"attempts": 0, "input_tokens": None, "output_tokens": None, "success": False}
         provenance = {"connection_name": self.connection.name, "model": self.connection.model,
                       "stage": name, "metrics": metrics}
-        schema = result_type.model_json_schema()
-        def strict(node):
-            if isinstance(node, dict):
-                if node.get("type") == "object":
-                    node["additionalProperties"] = False
-                    node["required"] = list(node.get("properties", {}))
-                for value in node.values():
-                    strict(value)
-            elif isinstance(node, list):
-                for value in node:
-                    strict(value)
-        strict(schema)
+        schema = _make_strict_schema(result_type.model_json_schema())
         correction = ""
         constraint_message = ""
         try:
