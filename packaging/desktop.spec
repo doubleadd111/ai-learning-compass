@@ -4,7 +4,8 @@ from pathlib import Path
 root = Path(SPECPATH).parent
 a = Analysis(
     [str(root / 'run_desktop.py')], pathex=[str(root)],
-    binaries=[], datas=[(str(root / 'docs' / 'desktop-guide.md'), 'docs'),
+    binaries=[], datas=[(str(root / 'desktop' / 'assets'), 'desktop/assets'),
+                         (str(root / 'docs' / 'desktop-guide.md'), 'docs'),
                          (str(root / 'THIRD_PARTY_NOTICES.md'), '.'),
                          (str(root / 'build' / 'licenses'), 'licenses')],
     hiddenimports=['keyring.backends.Windows', 'platformdirs.windows'],

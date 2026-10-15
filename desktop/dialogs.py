@@ -27,6 +27,14 @@ def date_edit(value=None):
 
 
 def buttons(dialog, layout, label="保存"):
+    layout.setContentsMargins(24, 24, 24, 24)
+    layout.setSpacing(16)
+    # Keep form rows readable while retaining standard tab/keyboard behaviour.
+    for index in range(layout.count()):
+        child = layout.itemAt(index).layout()
+        if isinstance(child, QFormLayout):
+            child.setVerticalSpacing(12)
+            child.setHorizontalSpacing(18)
     box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
     box.button(QDialogButtonBox.StandardButton.Save).setText(label)
     box.button(QDialogButtonBox.StandardButton.Save).setObjectName("primary")

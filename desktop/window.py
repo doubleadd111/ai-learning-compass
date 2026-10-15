@@ -11,7 +11,8 @@ from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
     QHBoxLayout, QHeaderView, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMainWindow,
     QMenu, QMessageBox, QPushButton, QProgressBar, QScrollArea, QSpinBox, QStackedWidget,
-    QSystemTrayIcon, QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget, QLineEdit)
+    QSystemTrayIcon, QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget, QLineEdit,
+    QSizePolicy)
 
 from demo_sample import sample_learning_plan
 from desktop import DISPLAY_VERSION
@@ -24,6 +25,7 @@ from desktop.network import TEST_TIMEOUT, MODELS_TIMEOUT, GENERATE_TIMEOUT
 from desktop.review import prepare_review
 from desktop.system import set_autostart
 from desktop.theme import apply_theme, compass_icon
+from desktop.ui import button_icon
 from desktop.workers import Worker
 
 
@@ -38,8 +40,11 @@ def label(text, *, name=None, wrap=False):
 
 def button(text, handler, primary=False):
     widget = QPushButton(text)
+    widget.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
     if primary:
         widget.setObjectName("primary")
+    if text == "删除":
+        widget.setObjectName("danger")
     widget.clicked.connect(lambda _checked=False: handler())
     return widget
 
@@ -48,8 +53,11 @@ def horizontal(*widgets):
     row = QWidget()
     layout = QHBoxLayout(row)
     layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(10)
     for widget in widgets:
         layout.addWidget(widget)
+    if widgets and all(isinstance(widget, QPushButton) for widget in widgets):
+        layout.addStretch()
     return row
 
 
@@ -101,7 +109,7 @@ class MainWindow(QMainWindow):
         self.enable_tray = enable_tray
         self.setWindowTitle(f"学习罗盘 {DISPLAY_VERSION}")
         self.setWindowIcon(compass_icon())
-        self.resize(1200, 820)
+        self.resize(1220, 820)
         self.setMinimumSize(980, 680)
         self.tray = None
         self._build()
@@ -123,47 +131,60 @@ class MainWindow(QMainWindow):
         outer.setSpacing(0)
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(206)
+        sidebar.setFixedWidth(208)
         side = QVBoxLayout(sidebar)
-        side.setContentsMargins(20, 30, 20, 22)
+        side.setContentsMargins(16, 26, 16, 22)
+        side.setSpacing(8)
         icon = QLabel()
-        icon.setPixmap(compass_icon().pixmap(46, 46))
-        side.addWidget(icon)
-        side.addWidget(label("学习罗盘", name="brand"))
-        side.addWidget(label("从目标，到每天的一步", name="muted"))
+        icon.setPixmap(compass_icon().pixmap(34, 34))
+        icon.setFixedSize(34, 34)
+        side.addWidget(horizontal(icon, label("学习罗盘", name="brand")))
+        side.addSpacing(7)
+        side.addWidget(label("LEARNING COMPASS", name="eyebrow"))
         side.addSpacing(30)
+        side.addWidget(label("我的学习空间", name="eyebrow"))
         self.nav = []
         self.stack = QStackedWidget()
         for index, text in enumerate(["今日", "计划库", "周视图", "专注", "设置"]):
+            if index == 4:
+                side.addStretch()
             item = QPushButton(text)
             item.setObjectName("nav")
+            button_icon(item, ["today", "library", "week", "focus", "settings"][index])
             item.setCheckable(True)
             item.clicked.connect(lambda _checked=False, i=index: self.navigate(i))
             self.nav.append(item)
             side.addWidget(item)
-        side.addStretch()
-        side.addWidget(label(f"首个桌面版  /  {DISPLAY_VERSION}", name="muted"))
-        side.addWidget(label("本机保存 · 自带模型", name="muted"))
+        side.addSpacing(18)
+        side.addWidget(label("本机保存 · 由你掌控", name="muted"))
+        side.addWidget(label(f"VERSION  {DISPLAY_VERSION}", name="eyebrow"))
         outer.addWidget(sidebar)
         body = QWidget()
         body_layout = QVBoxLayout(body)
-        body_layout.setContentsMargins(30, 24, 30, 24)
-        body_layout.setSpacing(16)
+        body_layout.setContentsMargins(32, 26, 32, 24)
+        body_layout.setSpacing(18)
         header = QHBoxLayout()
+        header.setSpacing(12)
+        title_group = QVBoxLayout()
+        title_group.setSpacing(4)
         self.page_title = label("今日", name="heading")
-        header.addWidget(self.page_title)
+        self.page_subtitle = label("", name="muted")
+        title_group.addWidget(self.page_title)
+        title_group.addWidget(self.page_subtitle)
+        header.addLayout(title_group)
         header.addStretch()
         self.model_picker = QComboBox()
-        self.model_picker.setMinimumWidth(210)
-        self.model_picker.setMaximumWidth(310)
+        self.model_picker.setMinimumWidth(190)
+        self.model_picker.setMaximumWidth(260)
         self.model_picker.setAccessibleName("当前生成模型")
         self.model_picker.currentIndexChanged.connect(self.select_model)
         header.addWidget(self.model_picker)
-        self.new_button = button("＋ 创建计划", self.create_plan, True)
+        self.new_button = button("创建计划", self.create_plan, True)
+        button_icon(self.new_button, "plus")
         header.addWidget(self.new_button)
         body_layout.addLayout(header)
         self.notice = StatusLabel()
-        self.notice.setObjectName("muted")
+        self.notice.setObjectName("notice")
         self.notice.setWordWrap(True)
         self.notice.hide()
         body_layout.addWidget(self.notice)
@@ -194,18 +215,25 @@ class MainWindow(QMainWindow):
         for i, item in enumerate(self.nav):
             item.setChecked(i == index)
         self.page_title.setText(["今日", "计划库", "周视图", "专注", "设置"][index])
+        self.page_subtitle.setText(["让每一小步，都算数。", "收藏目标，也记录走过的路。",
+                                   "把时间留给真正重要的事。", "专注当下，慢慢抵达。",
+                                   "让工具适合你的习惯。"][index])
 
     def _today_page(self):
         page, layout = page_layout()
-        layout.addWidget(label("把注意力留给今天这一小步。", name="brand"))
+        layout.addSpacing(8)
+        layout.addWidget(label("这一周，你的学习轨迹", name="brand"))
         self.today_summary = label("", name="muted")
         layout.addWidget(self.today_summary)
         self.trail = QHBoxLayout()
+        self.trail.setSpacing(10)
         self.trail_days = []
         for i in range(7):
             card = QFrame()
             card.setObjectName("card")
             inner = QVBoxLayout(card)
+            inner.setContentsMargins(10, 16, 10, 16)
+            inner.setSpacing(12)
             day_label, count = label(""), label("", name="muted")
             bar = QProgressBar()
             bar.setRange(0, 100)
@@ -219,12 +247,12 @@ class MainWindow(QMainWindow):
         self.welcome = label("先到设置添加模型连接，或载入样例体验。已有旧版计划可以在“设置 → 数据与备份”导入。", wrap=True)
         layout.addWidget(self.welcome)
         self.sample_button = button("载入两周 Python 体验样例（无需 API）", self.load_sample)
-        layout.addWidget(self.sample_button)
+        layout.addWidget(self.sample_button, 0, Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(label("今天与未完成的任务 · 双击填写记录", name="muted"))
         self.today_tree = task_tree()
         self.today_tree.itemDoubleClicked.connect(self.edit_tree_task)
         layout.addWidget(self.today_tree, 1)
-        layout.addWidget(button("记录／编辑选中任务", lambda: self.edit_tree_task(self.today_tree.currentItem())))
+        layout.addWidget(button("记录／编辑选中任务", lambda: self.edit_tree_task(self.today_tree.currentItem())), 0, Qt.AlignmentFlag.AlignLeft)
         self.stack.addWidget(page)
 
     def _library_page(self):
@@ -237,15 +265,19 @@ class MainWindow(QMainWindow):
         layout.addWidget(horizontal(self.search, self.archived))
         columns = QHBoxLayout()
         self.plan_list = QListWidget()
-        self.plan_list.setMaximumWidth(275)
+        self.plan_list.setMinimumWidth(215)
+        self.plan_list.setMaximumWidth(255)
         self.plan_list.currentItemChanged.connect(self.plan_selected)
         columns.addWidget(self.plan_list)
         right = QVBoxLayout()
-        self.plan_summary = label("选择一份计划，继续上次的学习。", wrap=True)
+        self.plan_title = label("", name="brand", wrap=True)
+        right.addWidget(self.plan_title)
+        self.plan_summary = label("选择一份计划，继续上次的学习。", name="muted", wrap=True)
         right.addWidget(self.plan_summary)
         right.addWidget(horizontal(button("重命名", self.rename_selected), button("归档／恢复", self.archive_selected),
                                    button("导出 JSON", self.export_selected), button("删除", self.delete_selected)))
         self.plan_progress = QProgressBar()
+        self.plan_progress.setTextVisible(False)
         right.addWidget(self.plan_progress)
         self.plan_tree = task_tree()
         self.plan_tree.itemDoubleClicked.connect(self.edit_tree_task)
@@ -262,8 +294,13 @@ class MainWindow(QMainWindow):
         page, layout = page_layout()
         self.week_offset = 0
         self.week_heading = label("", name="brand")
-        layout.addWidget(horizontal(button("上一周", lambda: self.change_week(-1)), self.week_heading,
-                                   button("本周", lambda: self.change_week(0)), button("下一周", lambda: self.change_week(1))))
+        previous = button("上一周", lambda: self.change_week(-1))
+        following = button("下一周", lambda: self.change_week(1))
+        button_icon(previous, "left")
+        button_icon(following, "right")
+        self.week_heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(horizontal(previous, self.week_heading,
+                                   button("本周", lambda: self.change_week(0)), following))
         layout.addWidget(label("按真实日期查看所有进行中的计划；双击任务可改期和填写记录。", name="muted", wrap=True))
         self.week_tree = task_tree()
         self.week_tree.itemDoubleClicked.connect(self.edit_tree_task)
@@ -272,47 +309,63 @@ class MainWindow(QMainWindow):
 
     def _focus_page(self):
         page, layout = page_layout()
-        layout.addWidget(label("一次只推进一件事", name="brand"))
+        layout.addStretch()
+        card = QFrame()
+        card.setObjectName("focusCard")
+        card.setMaximumWidth(610)
+        card.setMinimumWidth(530)
+        content = QVBoxLayout(card)
+        content.setContentsMargins(36, 34, 36, 34)
+        content.setSpacing(22)
+        lead = label("一次只推进一件事", name="brand")
+        lead.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        content.addWidget(lead)
         self.focus_label = label("专注 · 已暂停", name="muted")
         self.focus_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addStretch()
-        layout.addWidget(self.focus_label)
+        content.addWidget(self.focus_label)
         self.timer_label = label("25:00", name="timer")
         self.timer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.timer_label)
+        content.addWidget(self.timer_label)
         self.focus_task = QComboBox()
         self.focus_task.setAccessibleName("专注关联任务")
-        layout.addWidget(self.focus_task)
+        content.addWidget(self.focus_task)
         self.focus_minutes = spin(1, 180, self.focus.focus_minutes)
         self.break_minutes = spin(1, 60, self.focus.break_minutes)
-        layout.addWidget(horizontal(label("专注分钟"), self.focus_minutes, label("休息分钟"), self.break_minutes))
-        layout.addWidget(horizontal(button("开始／继续", self.start_focus, True), button("暂停", self.pause_focus), button("结束本次", self.stop_focus)))
-        layout.addWidget(label("专注时间自动累计，完成任务请到学习记录中确认。电脑休眠或完全退出时暂停。", name="muted", wrap=True))
+        content.addWidget(horizontal(label("专注分钟"), self.focus_minutes, label("休息分钟"), self.break_minutes))
+        content.addWidget(horizontal(button("开始／继续", self.start_focus, True), button("暂停", self.pause_focus), button("结束本次", self.stop_focus)))
+        content.addWidget(label("专注用时会自动记下。先完成这一小步，再去学习记录中确认任务。休眠或退出时自动暂停。", name="muted", wrap=True))
+        layout.addWidget(card, 0, Qt.AlignmentFlag.AlignHCenter)
         layout.addStretch()
         self.stack.addWidget(page)
 
     def _settings_page(self):
         page, layout = page_layout()
         tabs = QTabWidget()
+        tabs.setDocumentMode(True)
+        tabs.tabBar().setDrawBase(False)
         model_page, model_layout = page_layout()
-        model_layout.setContentsMargins(18, 18, 18, 18)
-        model_layout.addWidget(label("保存多套连接，按需切换自己的模型。", name="brand"))
-        model_layout.addWidget(label("API Key 保存在 Windows 凭据管理器；也可以选择仅本次使用。连接测试会发出真实的小额请求。", name="muted", wrap=True))
-        self.connection_list = QListWidget()
-        self.connection_list.itemDoubleClicked.connect(lambda _item: self.edit_connection())
-        model_layout.addWidget(self.connection_list, 1)
+        model_layout.setContentsMargins(0, 28, 0, 0)
+        model_layout.addWidget(label("用你喜欢的模型，规划下一步", name="brand"))
+        model_layout.addWidget(label("每套连接独立保存，随时切换。密钥保存在 Windows 凭据管理器，也可以仅本次使用。", name="muted", wrap=True))
         model_layout.addWidget(horizontal(button("添加连接", self.add_connection, True), button("编辑", self.edit_connection),
                                          button("删除", self.remove_connection)))
+        self.connection_list = QListWidget()
+        self.connection_list.setMinimumHeight(110)
+        self.connection_list.itemDoubleClicked.connect(lambda _item: self.edit_connection())
+        model_layout.addWidget(self.connection_list)
         model_layout.addWidget(horizontal(button("测试连接（使用额度）", self.test_connection), button("获取并选择模型", self.fetch_models)))
+        model_layout.addWidget(label("连接测试会发出小额真实请求，最长等待 30 秒。你可以随时取消；离线不会影响已保存的学习记录。", name="muted", wrap=True))
+        model_layout.addStretch()
         tabs.addTab(model_page, "模型连接")
         general, general_layout = page_layout()
-        general_layout.setContentsMargins(18, 18, 18, 18)
+        general_layout.setContentsMargins(0, 28, 0, 0)
         general_layout.addWidget(label("外观与运行", name="brand"))
         self.theme_picker = QComboBox()
         for text, value in (("跟随系统", "system"), ("浅色", "light"), ("深色", "dark")):
             self.theme_picker.addItem(text, value)
         self.theme_picker.setCurrentIndex(self.theme_picker.findData(self.store.setting("theme", "system")))
         self.theme_picker.currentIndexChanged.connect(self.change_theme)
+        self.theme_picker.setMaximumWidth(240)
         general_layout.addWidget(horizontal(label("界面主题"), self.theme_picker))
         self.tray_close = QCheckBox("关闭窗口后收进托盘，继续提醒和计时")
         self.tray_close.setChecked(self.store.setting("close_to_tray", True))
@@ -330,7 +383,7 @@ class MainWindow(QMainWindow):
         general_layout.addWidget(label(f"学习罗盘 {DISPLAY_VERSION}\n模型请求仅发送到你配置的服务商。离线时仍可管理计划、记录进度和专注。", name="muted", wrap=True))
         tabs.addTab(general, "外观与提醒")
         data, data_layout = page_layout()
-        data_layout.setContentsMargins(18, 18, 18, 18)
+        data_layout.setContentsMargins(0, 28, 0, 0)
         data_layout.addWidget(label("把学习记录留在自己手里", name="brand"))
         data_layout.addWidget(label(f"数据目录：{self.store.directory}\n每天首次修改前自动备份，保留最近 30 个每日备份。软件升级和正常卸载会保留此目录。", name="muted", wrap=True))
         data_layout.addWidget(horizontal(button("立即备份", self.backup_now, True), button("恢复整库备份", self.restore_backup),
@@ -396,6 +449,8 @@ class MainWindow(QMainWindow):
             self.model_picker.setCurrentIndex(position)
         self.model_picker.blockSignals(False)
         self.connection_list.clear()
+        self.connection_list.setMaximumHeight(max(110, min(360, len(configs) * 86 + 16)))
+        self.connection_list.setToolTip("双击连接可编辑；密钥不会显示在此列表中")
         for config in configs:
             item = QListWidgetItem(f"{config.name}  ·  {config.model}\n{config.base_url}  |  {config.api_type}")
             item.setData(Qt.ItemDataRole.UserRole, config.id)
@@ -417,6 +472,11 @@ class MainWindow(QMainWindow):
         monday = today - timedelta(days=today.weekday())
         for i, (heading, count, bar) in enumerate(self.trail_days):
             day = monday + timedelta(days=i)
+            card = heading.parentWidget()
+            if card.property("currentDay") != (day == today):
+                card.setProperty("currentDay", day == today)
+                card.style().unpolish(card)
+                card.style().polish(card)
             daily = [t for t in rows if t["due_date"] == day.isoformat()]
             done = sum(t["status"] == "已完成" for t in daily)
             heading.setText(f"{'今天' if day == today else '周' + '一二三四五六日'[i]}  {day:%m.%d}")
@@ -453,6 +513,7 @@ class MainWindow(QMainWindow):
             self.plan_selected(self.plan_list.currentItem())
         else:
             self.selected_plan_id = None
+            self.plan_title.clear()
             self.plan_tree.clear()
             self.plan_summary.setText("没有符合条件的计划。创建一份计划，或调整搜索条件。")
             self.review_text.clear()
@@ -464,7 +525,8 @@ class MainWindow(QMainWindow):
         self.selected_plan_id = item.data(Qt.ItemDataRole.UserRole)
         saved = self.store.get_plan(self.selected_plan_id)
         profile = saved["profile"]
-        self.plan_summary.setText(f"{saved['title']}\n{profile.subject} · {profile.plan_weeks} 周 · 单日上限 {profile.minutes_per_day} 分钟\n{saved['overview']}")
+        self.plan_title.setText(saved["title"])
+        self.plan_summary.setText(f"{profile.subject} · {profile.plan_weeks} 周 · 单日上限 {profile.minutes_per_day} 分钟\n{saved['overview']}")
         done = sum(t["status"] == "已完成" for t in saved["tasks"])
         self.plan_progress.setValue(round(done / len(saved["tasks"]) * 100))
         self.plan_progress.setFormat(f"已完成 {done}/{len(saved['tasks'])} 项")
