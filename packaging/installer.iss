@@ -1,4 +1,4 @@
-#define AppVersion "2026.10.1"
+#define AppVersion "2026.10.2"
 #define AppName "学习罗盘"
 
 [Setup]

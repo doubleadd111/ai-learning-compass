@@ -4,6 +4,7 @@ import json
 import math
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from time import monotonic
 
 from PySide6.QtCore import Qt, QThreadPool, QTimer, QUrl
 from PySide6.QtGui import QAction, QDesktopServices
@@ -92,6 +93,9 @@ class MainWindow(QMainWindow):
         self.request_timer.setSingleShot(True)
         self.request_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self.request_timer.timeout.connect(self.request_timed_out)
+        self.request_status_timer = QTimer(self)
+        self.request_status_timer.setInterval(100)
+        self.request_status_timer.timeout.connect(self.update_request_status)
         self.selected_plan_id = None
         self.exiting = False
         self.enable_tray = enable_tray
@@ -165,8 +169,13 @@ class MainWindow(QMainWindow):
         body_layout.addWidget(self.notice)
         busy_row = QHBoxLayout()
         self.busy = StatusLabel()
+        self.busy.setWordWrap(True)
         self.busy.hide()
         busy_row.addWidget(self.busy, 1)
+        self.request_countdown = label("", name="requestCountdown")
+        self.request_countdown.setAccessibleName("请求剩余时间")
+        self.request_countdown.hide()
+        busy_row.addWidget(self.request_countdown)
         self.cancel_button = button("取消当前请求", self.cancel_request)
         self.cancel_button.hide()
         busy_row.addWidget(self.cancel_button)
@@ -503,11 +512,27 @@ class MainWindow(QMainWindow):
         worker.signals.failed.connect(lambda message: self.request_failed(worker, message))
         worker.signals.finished.connect(lambda: self.work_finished(worker))
         self.request_timeout_seconds = timeout_seconds
+        self.request_deadline = monotonic() + timeout_seconds
+        self.request_message = text
         self.request_timer.start(max(1, int(timeout_seconds * 1000)))
+        self.request_status_timer.start()
         self.notice.clear()
         self.busy.setText(text)
         self.cancel_button.show()
+        self.request_countdown.show()
+        self.update_request_status()
         QThreadPool.globalInstance().start(worker)
+
+    def update_request_status(self):
+        if not self.worker:
+            return
+        remaining = max(0, math.ceil(self.request_deadline - monotonic()))
+        self.request_countdown.setText(f"剩余 {remaining}s")
+        self.request_countdown.setAccessibleDescription(f"请求剩余 {remaining} 秒")
+        stage = self.active_gateway.control.stage if self.active_gateway else ""
+        self.busy.setText(f"{self.request_message} · {stage}" if stage else self.request_message)
+        if remaining == 0:
+            self.request_timed_out()
 
     def cancel_request(self):
         if self.worker:
@@ -520,8 +545,10 @@ class MainWindow(QMainWindow):
     def request_timed_out(self):
         if self.worker:
             seconds = self.request_timeout_seconds
+            status = self.active_gateway.control.response_status if self.active_gateway else None
             self.cancel_request()
-            self.notice.setText(f"请求已超过 {seconds:g} 秒，已停止等待。请检查网络与代理或稍后重试；旧结果不会保存。")
+            detail = f"服务已返回 HTTP {status}，但未在时限内完成响应。" if status is not None else "未在时限内收到服务响应。"
+            self.notice.setText(f"请求已超过 {seconds:g} 秒，已停止等待。{detail}可检查网络与代理或稍后重试；旧结果不会保存。")
 
     def request_failed(self, worker, message):
         if self.worker is worker and not worker.cancelled.is_set():
@@ -533,6 +560,9 @@ class MainWindow(QMainWindow):
         if worker is not None and self.worker is not worker:
             return
         self.request_timer.stop()
+        self.request_status_timer.stop()
+        self.request_countdown.clear()
+        self.request_countdown.hide()
         self.worker = None
         self.active_gateway = None
         self.busy.clear()

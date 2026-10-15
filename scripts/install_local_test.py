@@ -39,12 +39,18 @@ def main():
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as registry:
             registered = Path(winreg.QueryValueEx(registry, "InstallLocation")[0]).resolve()
     except FileNotFoundError:
-        # 缺少卸载登记时，只允许已知默认目录内与原发布包逐字节相同的旧程序。
-        legacy = ROOT / "release" / "LearningCompass-2026.10.0-windows-x64-portable.zip"
-        with zipfile.ZipFile(legacy) as archive:
-            expected = hashlib.sha256(archive.read("LearningCompass/LearningCompass.exe")).hexdigest()
+        # 缺少卸载登记时，只接受在本地验证记录或原发布包中可核对的程序摘要。
         actual = hashlib.sha256((target / "LearningCompass.exe").read_bytes()).hexdigest()
-        if actual != expected:
+        known = []
+        for record in (ROOT / ".learning_compass" / "qa" / "known-local-builds").glob("*.json"):
+            data = json.loads(record.read_text(encoding="utf-8"))
+            if data.get("kind") == "local-test":
+                known.append(data.get("exe_sha256"))
+        legacy = ROOT / "release" / "LearningCompass-2026.10.0-windows-x64-portable.zip"
+        if legacy.is_file():
+            with zipfile.ZipFile(legacy) as archive:
+                known.append(hashlib.sha256(archive.read("LearningCompass/LearningCompass.exe")).hexdigest())
+        if actual not in known:
             raise RuntimeError("缺少安装登记且程序与原发布包不符，停止自动覆盖。") from None
         registered = target
     if registered != target or not (target / "LearningCompass.exe").is_file():
@@ -80,6 +86,9 @@ def main():
         raise RuntimeError("覆盖后校验失败，旧程序保存在恢复目录中。")
     if database_fingerprint(database) != before:
         raise RuntimeError("学习数据在更新期间发生变化，请先检查记录，不自动覆盖用户数据。")
+    known_directory = ROOT / ".learning_compass" / "qa" / "known-local-builds"
+    known_directory.mkdir(exist_ok=True)
+    shutil.copy2(ROOT / "build" / "local-test-manifest.json", known_directory / f"{VERSION}.json")
     report = dict(version=VERSION, kind="local-test", target=str(target), recovery=str(recovery),
                   data_unchanged=True, credentials_untouched=True, updated_at=datetime.now().isoformat())
     (recovery / "update-report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")

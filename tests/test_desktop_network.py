@@ -30,6 +30,8 @@ def test_transport_keeps_request_and_response_semantics(gzip_body):
     assert response.json() == {"ok": True}
     assert captured[0].headers["authorization"] == "Bearer placeholder"
     assert b"chosen" in captured[0].content
+    assert transport.control.response_status == 200
+    assert transport.control.received_bytes > 0 and transport.control.stage == "校验结果"
 
 
 def test_total_timeout_cancels_even_when_server_sends_keep_alive():

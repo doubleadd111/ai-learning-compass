@@ -27,6 +27,9 @@ class RequestControl:
     def begin(self, seconds, cancelled=None):
         self.cancelled = cancelled if cancelled is not None else threading.Event()
         self.deadline = monotonic() + seconds
+        self.stage = "准备请求"
+        self.response_status = None
+        self.received_bytes = 0
 
     def cancel(self):
         self.cancelled.set()
@@ -45,13 +48,22 @@ class CancellableTransport(httpx.BaseTransport):
 
     def handle_request(self, request):
         async def exchange():
+            self.control.stage = "连接服务"
             # AsyncClient 自行读取环境代理；外层同步 Client 禁用代理以避免绕过此传输。
             async with httpx.AsyncClient(transport=self.async_transport,
                                         timeout=httpx.Timeout(120, connect=10)) as client:
                 async with client.stream(request.method, request.url, headers=request.headers,
                                          content=request.content) as response:
-                    body = await response.aread()
-                    # aread 已解压，不能把压缩头复制给外层再解压一次。
+                    self.control.response_status = response.status_code
+                    self.control.stage = "等待服务返回结果"
+                    chunks = []
+                    async for chunk in response.aiter_bytes():
+                        chunks.append(chunk)
+                        self.control.received_bytes += len(chunk)
+                        self.control.stage = "正在接收结果" if chunk.strip() else "服务保持连接，等待模型响应"
+                    body = b"".join(chunks)
+                    self.control.stage = "校验结果"
+                    # aiter_bytes 已解压，不能把压缩头复制给外层再解压一次。
                     headers = [(key, value) for key, value in response.headers.multi_items()
                                if key.lower() not in {"content-encoding", "content-length", "transfer-encoding"}]
                     return httpx.Response(response.status_code, headers=headers,

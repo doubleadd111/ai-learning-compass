@@ -43,6 +43,27 @@ def test_desktop_sample_navigation_record_and_model_selection(qtbot, tmp_path):
     window.close()
 
 
+def test_countdown_completion_and_http_response_timeout_hint(qtbot, tmp_path, monkeypatch):
+    import threading
+    from types import SimpleNamespace
+    gate = threading.Event()
+    window = MainWindow(Store(tmp_path), credentials=CredentialStore(object()), enable_tray=False)
+    qtbot.addWidget(window)
+    window.start_work("快速成功", lambda cancel: True, lambda result: None)
+    qtbot.waitUntil(lambda: window.worker is None)
+    assert not window.request_status_timer.isActive() and window.request_countdown.text() == ""
+    fake_gateway = SimpleNamespace(control=SimpleNamespace(stage="等待服务返回结果", response_status=200),
+                                   cancel=lambda: None, close=lambda: None)
+    window.start_work("等待结果", lambda cancel: gate.wait(2), lambda result: None, fake_gateway, timeout_seconds=30)
+    assert "等待服务返回结果" in window.busy.text()
+    window.request_timed_out()
+    assert "HTTP 200" in window.notice.text() and "未在时限内完成" in window.notice.text()
+    assert not window.request_countdown.isVisible()
+    gate.set()
+    window.exiting = True
+    window.close()
+
+
 def test_background_result_returns_to_ui_and_cancel_discards_late_result(qtbot, tmp_path):
     import threading
     store = Store(tmp_path)
@@ -110,5 +131,32 @@ def test_ui_deadline_and_failure_restore_controls(qtbot, tmp_path, monkeypatch):
     qtbot.waitUntil(lambda: bool(messages))
     assert messages == [None] and window.worker is None
     assert "测试失败" in window.notice.text() and not results
+    window.exiting = True
+    window.close()
+
+
+def test_countdown_decreases_by_monotonic_time_and_cancel_resets_it(qtbot, tmp_path, monkeypatch):
+    import threading
+    clock = [100.0]
+    monkeypatch.setattr("desktop.window.monotonic", lambda: clock[0])
+    gate = threading.Event()
+    window = MainWindow(Store(tmp_path), credentials=CredentialStore(object()), enable_tray=False)
+    qtbot.addWidget(window)
+    window.show()
+    window.start_work("测试连接", lambda cancel: gate.wait(2), lambda result: None, timeout_seconds=30)
+    assert window.request_countdown.text() == "剩余 30s"
+    assert window.request_countdown.isVisible()
+    clock[0] += 7.2
+    window.update_request_status()
+    assert window.request_countdown.text() == "剩余 23s"
+    window.cancel_request()
+    assert not window.request_countdown.isVisible() and not window.request_status_timer.isActive()
+    window.start_work("再次测试", lambda cancel: gate.wait(2), lambda result: None, timeout_seconds=30)
+    assert window.request_countdown.text() == "剩余 30s"
+    clock[0] += 30
+    window.update_request_status()
+    assert window.worker is None and "停止等待" in window.notice.text()
+    assert not window.request_countdown.isVisible()
+    gate.set()
     window.exiting = True
     window.close()

@@ -175,6 +175,8 @@ class ModelGateway:
             if self.control.cancelled.is_set():
                 raise Cancelled() from None
             if isinstance(error, APITimeoutError):
+                if self.control.response_status is not None:
+                    raise GatewayError(f"服务已返回 HTTP {self.control.response_status}，但 {TEST_TIMEOUT} 秒内没有完成 JSON 响应。可能在服务端排队或响应传输中，请稍后重试；未自动重试。") from None
                 raise GatewayError(f"连接测试超过 {TEST_TIMEOUT} 秒或网络响应超时，请检查网络与代理，或稍后重试。") from None
             raise GatewayError(friendly_error(error)[0]) from None
         except ValueError:

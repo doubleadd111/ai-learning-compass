@@ -38,6 +38,7 @@ def apply_theme(app, choice="system"):
         QWidget {{ color:{ink}; }} QMainWindow, QDialog {{ background:{bg}; }}
         QLabel#muted {{ color:{muted}; }} QLabel#heading {{ font-size:26px; font-weight:700; }}
         QLabel#brand {{ font-size:21px; font-weight:700; }} QLabel#timer {{ font:64px 'Consolas'; color:#3E80F2; }}
+        QLabel#requestCountdown {{ font:600 14px 'Consolas'; color:#3E80F2; background:{sidebar}; padding:7px 10px; border:1px solid {line}; border-radius:6px; }}
         QFrame#sidebar {{ background:{sidebar}; border-right:1px solid {line}; }}
         QFrame#card {{ background:{card}; border:1px solid {line}; border-radius:10px; }}
         QPushButton {{ background:{card}; border:1px solid {line}; padding:9px 16px; border-radius:7px; }}
