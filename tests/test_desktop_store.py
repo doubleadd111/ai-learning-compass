@@ -125,7 +125,7 @@ def test_review_protects_edited_task_preserves_history_and_undo(tmp_path):
     store.apply_review(pid, preview["week"], preview["summary"], preview["adjusted"], preview["revision"], preview["provenance"])
     after = store.tasks(pid)
     assert after[2]["id"] == rows[2]["id"]
-    assert after[3]["id"] != rows[3]["id"]
+    assert after[3]["id"] == rows[3]["id"]
     assert store.reviews(pid)
     store.undo_review(pid)
     assert store.reviews(pid) == {}

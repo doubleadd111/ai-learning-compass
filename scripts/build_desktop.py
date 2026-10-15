@@ -17,7 +17,7 @@ from desktop import VERSION
 
 
 def source_digest():
-    paths = sorted((ROOT / "desktop").glob("*.py")) + sorted((ROOT / "desktop" / "assets").glob("*.svg")) + [ROOT / name for name in ("run_desktop.py", "models.py", "planner.py", "curriculum.py", "progress_store.py", "weekly_review.py", "plan_transfer.py")]
+    paths = sorted((ROOT / "desktop").glob("*.py")) + sorted((ROOT / "desktop" / "assets").glob("*.svg")) + [ROOT / name for name in ("docs/desktop-guide.md", "run_desktop.py", "models.py", "planner.py", "curriculum.py", "progress_store.py", "weekly_review.py", "plan_transfer.py")]
     digest = hashlib.sha256()
     for path in paths:
         digest.update(path.relative_to(ROOT).as_posix().encode())

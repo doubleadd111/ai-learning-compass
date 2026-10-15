@@ -97,12 +97,16 @@ def apply_theme(app, choice="system"):
         QPushButton#nav:pressed {{ background:{pressed}; border-color:{accent}; }}
         QPushButton#nav:focus {{ border-color:{accent}; }}
         QPushButton#nav:disabled, QPushButton#danger:disabled {{ background:{colors['disabled']}; color:{muted}; border-color:{line}; }}
+        QToolButton {{ background:{card}; color:{ink}; border:1px solid {line}; border-radius:10px; padding:14px 16px; text-align:left; }}
+        QToolButton:hover, QToolButton[hovered="true"], QToolButton:checked {{ background:{hover}; border-color:{accent}; color:{accent}; }}
+        QToolButton:pressed {{ background:{pressed}; }} QToolButton:focus {{ border-color:{accent}; }}
         QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QSpinBox, QDateEdit, QTimeEdit {{
             background:{card}; border:1px solid {line}; border-radius:8px; padding:9px 10px; min-height:20px;
             selection-background-color:{selected}; selection-color:{ink};
         }}
         QComboBox:hover, QSpinBox:hover, QDateEdit:hover, QTimeEdit:hover, QLineEdit:hover {{ border-color:{muted}; }}
         QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QSpinBox:focus, QDateEdit:focus, QTimeEdit:focus {{ border-color:{accent}; }}
+        QTextBrowser#reading {{ background:{card}; border:1px solid {line}; border-radius:12px; padding:16px; font-size:14px; }}
         QComboBox {{ padding-right:28px; }} QComboBox::drop-down {{ border:0; width:28px; }}
         QComboBox::down-arrow, QDateEdit::down-arrow {{ image:url("{assets}/chevron-{variant}.svg"); width:14px; height:14px; }}
         QSpinBox, QTimeEdit {{ padding-right:28px; }}

@@ -10,13 +10,17 @@ sys.path.insert(0, str(ROOT))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QPushButton, QTabWidget
+from PySide6.QtWidgets import QApplication, QPushButton, QTabWidget, QToolButton
 from PySide6.QtGui import QFontDatabase
 from desktop.dialogs import ConnectionDialog, PlanDialog, TaskDialog
 from desktop.models import ModelConnection
 from desktop.store import Store
 from desktop.theme import apply_theme
 from desktop.window import MainWindow
+from desktop.guide import GuideWindow
+from desktop.planning import PlanningDraft, PlanningTurn, PlanOutline, OutlinePoint, ClarificationQuestion, RevisionProposal, TaskChange, modification_context
+from desktop.planning_ui import PlanningWindow, HistoryWindow
+from datetime import date
 
 
 app = QApplication([])
@@ -72,6 +76,60 @@ with tempfile.TemporaryDirectory() as directory:
             app.processEvents()
             dialog.grab().save(str(output / f"{theme}-{name}.png"))
             dialog.close()
+        guide = GuideWindow(window)
+        guide.go("create")
+        app.processEvents()
+        guide.grab().save(str(output / f"{theme}-guide.png"))
+        guide.close()
+        saved = store.get_plan(window.selected_plan_id)
+        draft = PlanningDraft(profile=saved["profile"], start_date=date.today(), weekdays=[date.fromisoformat(t["due_date"]).weekday() for t in saved["tasks"][:3]],
+                              connection=config, outcome="独立完成一个可运行的小工具")
+        flow = PlanningWindow(window, draft)
+        flow.show()
+        app.processEvents()
+        flow.grab().save(str(output / f"{theme}-wizard.png"))
+        flow.draft.receive_turn(PlanningTurn(decision="ask", questions=[ClarificationQuestion(id="output", question="你更希望最后做出哪一种成果？", purpose="用来选择练习和验收方式", options=["命令行小工具", "数据处理脚本", "先巩固基础语法"])], outline=None))
+        flow.render()
+        app.processEvents()
+        flow.grab().save(str(output / f"{theme}-questions.png"))
+        flow.draft.answer_questions({"output": "命令行小工具"})
+        flow.draft.receive_turn(PlanningTurn(decision="outline", questions=[], outline=PlanOutline(points=[OutlinePoint(id=f"point-{i}", summary=text,
+            objective="在可用时间内逐步建立基础", content="先运行短示例，再完成独立练习，最后检查输出。", deliverable="可运行的Python练习脚本", rationale="从当前零基础出发，每天聚焦一个小目标。") for i, text in enumerate([
+            "先用短练习熟悉代码运行、输入输出与变量，逐步建立自己动手的信心。",
+            "再通过判断、循环与函数处理重复步骤，每天留下可以验证的练习产出。",
+            "最后把已有练习组合成命令行小工具，并保留复习与修正错误的时间。"
+        ])], assumptions=["已具备可用电脑，优先使用中文资料"])))
+        flow.render()
+        flow.findChildren(QToolButton)[0].setChecked(True)
+        app.processEvents()
+        flow.grab().save(str(output / f"{theme}-outline.png"))
+        flow.resize(700, 540)
+        app.processEvents()
+        flow.grab().save(str(output / f"{theme}-outline-compact.png"))
+        flow.resize(860, 740)
+        flow.draft.candidate = saved["plan"]
+        flow.draft.state = "preview"
+        flow.render()
+        app.processEvents()
+        flow.grab().save(str(output / f"{theme}-details.png"))
+        row = saved["tasks"][0]
+        context = modification_context(saved, [row["id"]], {})
+        flow.draft.kind = "modify"
+        flow.draft.source_plan_id = saved["id"]
+        flow.draft.source_revision = saved["revision"]
+        flow.draft.target_ids = context["target_ids"]
+        flow.draft.source_context = context
+        flow.draft.candidate = None
+        flow.draft.proposal = RevisionProposal(summary="只细化选中任务的操作步骤，其他任务和时间保持。", changes=[TaskChange(task_id=row["id"], task=row["task"].model_copy(update={"title": "运行并验证第一段代码", "description": "1.新建hello.py；2.输出自己的问候语；3.修改文字并再次运行，检查输出。"}), due_date=date.fromisoformat(row["due_date"]), reason="把原来的宽泛要求拆成三个能验证的小动作。")])
+        flow.render()
+        app.processEvents()
+        flow.grab().save(str(output / f"{theme}-revision.png"))
+        flow.close()
+        history = HistoryWindow(store, saved["id"], window)
+        history.show()
+        app.processEvents()
+        history.grab().save(str(output / f"{theme}-history.png"))
+        history.close()
         gate = threading.Event()
         window.navigate(4)
         window.start_work("正在测试 JSON 连接…", lambda cancel: gate.wait(10), lambda result: None, timeout_seconds=30)

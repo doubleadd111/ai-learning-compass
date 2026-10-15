@@ -7,7 +7,7 @@ from pathlib import Path
 from time import monotonic
 
 from PySide6.QtCore import Qt, QThreadPool, QTimer, QUrl
-from PySide6.QtGui import QAction, QDesktopServices
+from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
     QHBoxLayout, QHeaderView, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMainWindow,
     QMenu, QMessageBox, QPushButton, QProgressBar, QScrollArea, QSpinBox, QStackedWidget,
@@ -27,6 +27,9 @@ from desktop.system import set_autostart
 from desktop.theme import apply_theme, compass_icon
 from desktop.ui import button_icon
 from desktop.workers import Worker
+from desktop.guide import open_guide
+from desktop.planning import PlanningDraft, modification_context
+from desktop.planning_ui import PlanningWindow, ModificationDialog, DraftsDialog, HistoryWindow
 
 
 def label(text, *, name=None, wrap=False):
@@ -105,6 +108,8 @@ class MainWindow(QMainWindow):
         self.request_status_timer.setInterval(100)
         self.request_status_timer.timeout.connect(self.update_request_status)
         self.selected_plan_id = None
+        self.planning_window = None
+        self.history_windows = []
         self.exiting = False
         self.enable_tray = enable_tray
         self.setWindowTitle(f"学习罗盘 {DISPLAY_VERSION}")
@@ -113,6 +118,8 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(980, 680)
         self.tray = None
         self._build()
+        self.guide_shortcut = QShortcut(QKeySequence("F1"), self)
+        self.guide_shortcut.activated.connect(lambda: open_guide(self))
         self._build_tray()
         self.refresh()
         self.clock_timer = QTimer(self)
@@ -156,6 +163,7 @@ class MainWindow(QMainWindow):
             self.nav.append(item)
             side.addWidget(item)
         side.addSpacing(18)
+        side.addWidget(button("使用指南  ·  F1", lambda: open_guide(self)))
         side.addWidget(label("本机保存 · 由你掌控", name="muted"))
         side.addWidget(label(f"VERSION  {DISPLAY_VERSION}", name="eyebrow"))
         outer.addWidget(sidebar)
@@ -263,6 +271,9 @@ class MainWindow(QMainWindow):
         self.archived = QCheckBox("查看已归档")
         self.archived.toggled.connect(self.refresh_library)
         layout.addWidget(horizontal(self.search, self.archived))
+        layout.addWidget(horizontal(button("AI 调整计划", self.modify_plan, True),
+                                    button("按此计划创建副本", self.fork_plan),
+                                    button("查看需求与历史", self.show_history), button("继续草稿", self.resume_draft)))
         columns = QHBoxLayout()
         self.plan_list = QListWidget()
         self.plan_list.setMinimumWidth(215)
@@ -280,6 +291,7 @@ class MainWindow(QMainWindow):
         self.plan_progress.setTextVisible(False)
         right.addWidget(self.plan_progress)
         self.plan_tree = task_tree()
+        self.plan_tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
         self.plan_tree.itemDoubleClicked.connect(self.edit_tree_task)
         right.addWidget(self.plan_tree, 1)
         self.review_text = label("", name="muted", wrap=True)
@@ -631,26 +643,67 @@ class MainWindow(QMainWindow):
         self.cancel_button.hide()
 
     def create_plan(self):
-        if not self.store.connections():
-            self.navigate(4)
-            QMessageBox.information(self, "先添加模型", "在模型连接中填写你的服务地址、模型 ID 和 API Key，即可开始生成。")
+        config = next((c for c in self.store.connections() if c.id == self.model_picker.currentData()), None)
+        draft = PlanningDraft(profile=DesktopProfile(subject="Python", goal="请填写希望实现的学习目标", current_level="零基础",
+                              plan_weeks=4, days_per_week=5, minutes_per_day=45),
+                              start_date=date.today(), weekdays=[0, 1, 2, 3, 4], connection=config,
+                              base_inputs={"goal": ""})
+        self.open_planning(draft)
+
+    def open_planning(self, draft):
+        if self.planning_window and not self.planning_window.closed:
+            if self.planning_window.draft.id == draft.id:
+                self.planning_window.show()
+                self.planning_window.raise_()
+                return
+            if not self.planning_window.close():
+                return
+        self.planning_window = PlanningWindow(self, draft)
+        self.planning_window.show()
+
+    def resume_draft(self):
+        dialog = DraftsDialog(self.store, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.selected:
+            self.open_planning(dialog.selected)
+
+    def fork_plan(self):
+        if not self.selected_plan_id:
+            self.notice.setText("先选择一份计划，再创建副本。")
             return
-        dialog = PlanDialog(self.store.connections(), self.model_picker.currentData(), self)
+        self.pause_focus()
+        saved = self.store.get_plan(self.selected_plan_id)
+        config = next((c for c in self.store.connections() if c.id == self.model_picker.currentData()), None)
+        learned = "；".join(t["task"].title for t in saved["tasks"] if t["status"] == "已完成")[:1500]
+        draft = PlanningDraft(profile=saved["profile"], start_date=date.today(), weekdays=json.loads(saved["weekdays_json"]),
+                              connection=config, mastered=learned, parent_plan_id=saved["id"], parent_revision=saved["revision"])
+        self.open_planning(draft)
+
+    def modify_plan(self):
+        if not self.selected_plan_id:
+            self.notice.setText("先选择计划和需要调整的范围。")
+            return
+        self.pause_focus()
+        saved = self.store.get_plan(self.selected_plan_id)
+        selected = [item.data(0, Qt.ItemDataRole.UserRole) for item in self.plan_tree.selectedItems()]
+        dialog = ModificationDialog(saved, selected, self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        profile, start, weekdays, connection_id = dialog.spec()
         def begin():
-            gateway = self.gateway(connection_id)
-            def done(result):
-                plan, provenance = result
-                self.selected_plan_id = self.store.save_plan(profile, plan, start, weekdays, provenance=provenance)
-                self.archived.setChecked(False)
-                self.search.clear()
-                self.refresh()
-                self.navigate(1)
-                self.notice.setText("计划已保存在本机。双击任务即可开始记录。")
-            self.start_work("正在生成学习计划…", lambda cancel: gateway.generate(profile, cancelled=cancel), done, gateway)
+            context = modification_context(saved, dialog.target_ids(saved, selected), self.store.reviews(saved["id"]))
+            config = next((c for c in self.store.connections() if c.id == self.model_picker.currentData()), None)
+            draft = PlanningDraft(kind="modify", profile=saved["profile"], start_date=date.fromisoformat(saved["start_date"]),
+                weekdays=json.loads(saved["weekdays_json"]), connection=config,
+                source_plan_id=saved["id"], source_revision=saved["revision"], target_ids=context["target_ids"],
+                source_context={**context, "confirmed_requirements": self.store.brief(saved["id"])},
+                request=dialog.intent.currentText() + "；" + dialog.text.toPlainText())
+            self.open_planning(draft)
         self.safe(begin)
+
+    def show_history(self):
+        if self.selected_plan_id:
+            dialog = HistoryWindow(self.store, self.selected_plan_id, self)
+            self.history_windows.append(dialog)
+            dialog.show()
 
     def load_sample(self):
         profile, plan = sample_learning_plan()
@@ -720,7 +773,7 @@ class MainWindow(QMainWindow):
 
     def undo_selected(self):
         if self.selected_plan_id:
-            self.safe(lambda: self.store.undo_review(self.selected_plan_id))
+            self.safe(lambda: self.store.undo_latest(self.selected_plan_id))
             self.refresh()
 
     def export_selected(self):
@@ -913,6 +966,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "未能设置", "无法修改当前用户的开机启动设置。")
 
     def quit_app(self):
+        if self.planning_window and not self.planning_window.closed:
+            if not self.planning_window.close():
+                return
         self.focus.pause()
         self.cancel_request()
         self.exiting = True
@@ -929,6 +985,10 @@ class MainWindow(QMainWindow):
                 self.tray.showMessage("学习罗盘仍在运行", "提醒和计时会继续。从右下角托盘菜单选择“完全退出”可停止软件。")
                 self.store.set_setting("tray_explained", True)
         else:
+            if self.planning_window and not self.planning_window.closed:
+                if not self.planning_window.close():
+                    event.ignore()
+                    return
             self.focus.pause()
             self.cancel_request()
             event.accept()

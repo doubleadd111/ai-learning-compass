@@ -1,7 +1,18 @@
 """Code-drawn navigation icons and shared, keyboard-friendly button feedback."""
 from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QPushButton
+from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QPushButton, QToolButton
+
+
+def readable_document(browser):
+    browser.setObjectName("reading")
+    browser.document().setDefaultStyleSheet("""
+        p { margin-top:0; margin-bottom:12px; line-height:150%; }
+        li { margin-top:5px; margin-bottom:5px; line-height:150%; }
+        h2 { margin-top:6px; margin-bottom:16px; }
+        h3 { margin-top:18px; margin-bottom:12px; }
+        td { vertical-align:top; }
+    """)
 
 
 def line_icon(name, color, accent="#356CF6"):
@@ -67,12 +78,12 @@ class ButtonFeedback(QObject):
     :pressed and :focus states retain standard Qt mouse/keyboard semantics.
     """
     def eventFilter(self, watched, event):
-        if isinstance(watched, (QPushButton, QCheckBox, QComboBox)):
+        if isinstance(watched, (QPushButton, QToolButton, QCheckBox, QComboBox)):
             kind = event.type()
             if kind in (QEvent.Type.Polish, QEvent.Type.EnabledChange):
                 watched.setCursor(Qt.CursorShape.PointingHandCursor if watched.isEnabled()
                                   else Qt.CursorShape.ArrowCursor)
-            if isinstance(watched, QPushButton) and kind in (
+            if isinstance(watched, (QPushButton, QToolButton)) and kind in (
                     QEvent.Type.Enter, QEvent.Type.Leave, QEvent.Type.EnabledChange):
                 hovered = kind == QEvent.Type.Enter and watched.isEnabled()
                 if watched.property("hovered") != hovered:

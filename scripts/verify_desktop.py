@@ -12,6 +12,8 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from desktop.store import Store
+from desktop import VERSION
+from desktop.guide import CHAPTERS
 
 
 def main():
@@ -20,6 +22,9 @@ def main():
     parser.add_argument("--report", type=Path, default=ROOT / "release" / "verification.json")
     args = parser.parse_args()
     executable = args.directory.resolve() / "LearningCompass.exe"
+    bundled_guide = (executable.parent / "_internal" / "docs" / "desktop-guide.md").read_text(encoding="utf-8")
+    assert f"`{VERSION}`" in bundled_guide
+    assert all(f"## {chapter}" in bundled_guide for chapter in CHAPTERS.values())
     environment = dict(os.environ)
     environment["PATH"] = str(Path(os.environ.get("WINDIR", "C:/Windows")) / "System32")
     environment.pop("VIRTUAL_ENV", None)
@@ -31,7 +36,7 @@ def main():
         command = [str(executable), "--smoke-test", "--data-dir", str(data)]
         subprocess.run(command, env=environment, cwd=directory, timeout=90, check=True)
         first = json.loads((data / "smoke-result.json").read_text(encoding="utf-8"))
-        assert first["success"] and first["pages"] == 5 and first["tasks"] == 6
+        assert first["success"] and first["version"] == VERSION and first["pages"] == 5 and first["tasks"] == 6
         store = Store(data)
         row = store.tasks()[0]
         store.update_task(row["id"], row["task"], row["due_date"], row["remind_at"], "已完成", 12, 2, "冻结程序重启验证")
@@ -54,7 +59,7 @@ def main():
             process.wait(timeout=15)
         report = dict(version=first["version"], frozen_start=True, external_python_removed=True,
                       restart_preserved=True, single_instance=True, credential_store=first.get("credential_store"),
-                      clean_windows_vm=False)
+                      offline_guide_packaged=True, clean_windows_vm=False)
     output = args.report
     output.parent.mkdir(exist_ok=True)
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")

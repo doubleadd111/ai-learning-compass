@@ -14,7 +14,7 @@ from progress_store import StudyRepository, TaskProgress
 from desktop.models import DesktopProfile, ModelConnection, new_id, schedule_dates
 
 APP_ID = 0x4C434D50
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def now() -> str:
@@ -45,6 +45,22 @@ class Store:
         return connection
 
     def _initialize(self):
+        with closing(self.connect()) as probe:
+            old_version = probe.execute("PRAGMA user_version").fetchone()[0]
+            if old_version == 1 and probe.execute("PRAGMA application_id").fetchone()[0] != APP_ID:
+                raise ValueError("不是学习罗盘桌面数据库")
+        if old_version == 1:
+            self.backup_to(self.backups / f"before-schema-2-{new_id()}.sqlite3")
+            staged_path = self.directory / f"upgrade-{new_id()}.sqlite3"
+            try:
+                self.backup_to(staged_path)
+                with closing(sqlite3.connect(staged_path)) as staged, staged:
+                    self._upgrade_v2(staged)
+                self.inspect_backup(staged_path)
+                os.replace(staged_path, self.path)
+            finally:
+                staged_path.unlink(missing_ok=True)
+            return
         with closing(self.connect()) as c, c:
             version = c.execute("PRAGMA user_version").fetchone()[0]
             if version > SCHEMA_VERSION:
@@ -89,8 +105,31 @@ class Store:
                 CREATE INDEX tasks_due ON tasks(due_date, status);
             """)
             c.execute(f"PRAGMA application_id={APP_ID}")
-            c.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+            c.execute("PRAGMA user_version=1")
+            self._upgrade_v2(c)
         c.close()
+
+    @staticmethod
+    def _upgrade_v2(c):
+        if not c.in_transaction:
+            c.execute("BEGIN IMMEDIATE")
+        c.execute("ALTER TABLE tasks ADD COLUMN ai_locked INTEGER NOT NULL DEFAULT 0")
+        c.execute("UPDATE tasks SET ai_locked=user_modified")
+        c.execute("CREATE TABLE planning_drafts (id TEXT PRIMARY KEY, data_json TEXT NOT NULL, updated_at TEXT NOT NULL)")
+        c.execute("""CREATE TABLE plan_briefs (plan_id TEXT PRIMARY KEY REFERENCES plans(id) ON DELETE CASCADE,
+                  data_json TEXT NOT NULL, parent_plan_id TEXT)""")
+        c.execute("""CREATE TABLE plan_versions (id TEXT PRIMARY KEY, plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+                  kind TEXT NOT NULL, before_json TEXT NOT NULL, after_json TEXT NOT NULL,
+                  expected_revision INTEGER NOT NULL, created_at TEXT NOT NULL)""")
+        c.execute("""CREATE TABLE planning_events (id TEXT PRIMARY KEY, draft_id TEXT,
+                  data_json TEXT NOT NULL, created_at TEXT NOT NULL)""")
+        # Old undo snapshots did not contain task locks. Preserve them by upgrading
+        # their in-memory representation, never rewriting the old backup file.
+        for row in c.execute("SELECT plan_id,snapshot_json FROM undo").fetchall():
+            data = json.loads(row[1])
+            Store._normalize_snapshot(data)
+            c.execute("UPDATE undo SET snapshot_json=? WHERE plan_id=?", (json.dumps(data, ensure_ascii=False), row[0]))
+        c.execute("PRAGMA user_version=2")
 
     def read(self, sql, params=()):
         c = self.connect()
@@ -144,13 +183,22 @@ class Store:
         with self.write() as c:
             c.execute("DELETE FROM connections WHERE id=?", (connection_id,))
 
-    def save_plan(self, profile: DesktopProfile, plan: StudyPlan, start: date, weekdays: list[int], *, provenance=None):
+    def save_plan(self, profile: DesktopProfile, plan: StudyPlan, start: date, weekdays: list[int], *, provenance=None,
+                  brief=None, parent_plan_id=None, parent_revision=None, archive_parent=False, draft_id=None):
         validate_plan_for_profile(plan, profile)
+        if brief is not None:
+            from desktop.planning import validate_brief
+            validate_brief(brief)
         if len(weekdays) != profile.days_per_week:
             raise ValueError("学习日数量与计划不一致")
         dates = schedule_dates(start, weekdays, profile.plan_weeks)
         plan_id = new_id()
         with self.write() as c:
+            c.execute("BEGIN IMMEDIATE")
+            if parent_plan_id:
+                parent = c.execute("SELECT revision FROM plans WHERE id=?", (parent_plan_id,)).fetchone()
+                if not parent or parent[0] != parent_revision:
+                    raise ValueError("原计划已有变化，请重新确认副本背景")
             c.execute("INSERT INTO plans VALUES (?,?,?,?,?,?,?,0,0,?,?)", (
                 plan_id, profile.model_dump_json(), plan.title, plan.overview,
                 json.dumps(plan.learning_tips, ensure_ascii=False), start.isoformat(), json.dumps(weekdays), now(), now()))
@@ -161,6 +209,14 @@ class Store:
                               (new_id(), plan_id, week.week_number, task.day, task.model_dump_json(), dates[(week.week_number, task.day)], "20:00"))
             if provenance:
                 self._event(c, plan_id, "生成", provenance)
+            if brief:
+                c.execute("INSERT INTO plan_briefs VALUES (?,?,?)", (plan_id, json.dumps(brief, ensure_ascii=False), parent_plan_id))
+            if parent_plan_id and archive_parent:
+                c.execute("UPDATE plans SET archived=1 WHERE id=?", (parent_plan_id,))
+                self._touch(c, parent_plan_id)
+            if draft_id:
+                c.execute("DELETE FROM planning_drafts WHERE id=?", (draft_id,))
+            self._version(c, plan_id, "创建计划", {})
         return plan_id
 
     def list_plans(self, search="", archived=False):
@@ -215,7 +271,7 @@ class Store:
             c.execute("DELETE FROM plans WHERE id=?", (plan_id,))
 
     def update_task(self, task_id, payload: DailyTask, due_date: str, remind_at: str | None,
-                    status: str, manual_minutes: int, difficulty, note: str):
+                    status: str, manual_minutes: int, difficulty, note: str, ai_locked=None):
         task = next(iter(self.read("SELECT * FROM tasks WHERE id=?", (task_id,))), None)
         if not task:
             raise ValueError("找不到这项任务")
@@ -241,10 +297,18 @@ class Store:
             raise ValueError("改期后超过这份计划的每周时间上限，请换一周安排")
         with self.write() as c:
             c.execute("""UPDATE tasks SET payload_json=?,due_date=?,remind_at=?,status=?,manual_seconds=?,
-                difficulty=?,note=?,user_modified=MAX(user_modified,?) WHERE id=?""",
+                difficulty=?,note=?,user_modified=MAX(user_modified,?),ai_locked=MAX(ai_locked,?) WHERE id=?""",
                       (payload.model_dump_json(), due_date, remind_at, status, manual_minutes * 60,
-                       difficulty, note, int(protected), task_id))
+                       difficulty, note, int(protected), int(protected), task_id))
             self._touch(c, task["plan_id"])
+            if ai_locked is not None and not protected:
+                # Explicit unlocking never removes progress-based protection.
+                from desktop.planning import protection_reason
+                current = {**task, "status": status, "manual_seconds": manual_minutes * 60,
+                           "difficulty": difficulty, "note": note, "ai_locked": 0}
+                if not ai_locked and task["ai_locked"] and protection_reason(current, self.reviews(task["plan_id"])):
+                    raise ValueError("已有学习记录或已复盘的任务不能解除保护")
+                c.execute("UPDATE tasks SET ai_locked=? WHERE id=?", (int(ai_locked), task_id))
 
     def progress(self, plan_id):
         return {(t["week"], t["day"]): TaskProgress(status=t["status"],
@@ -255,28 +319,156 @@ class Store:
         return {r["week"]: r["summary"] for r in self.read("SELECT * FROM reviews WHERE plan_id=?", (plan_id,))}
 
     def _snapshot(self, plan_id):
-        result = {"format": "learning-compass-plan", "version": 2}
-        for table in ("plans", "weeks", "tasks", "reviews", "generation_events", "focus_sessions", "notifications"):
+        with closing(self.connect()) as c:
+            return self._snapshot_in_transaction(c, plan_id)
+
+    @staticmethod
+    def _snapshot_in_transaction(c, plan_id):
+        result = {"format": "learning-compass-plan", "version": 3}
+        for table in ("plans", "weeks", "tasks", "reviews", "generation_events", "focus_sessions", "notifications", "plan_briefs"):
             if table == "plans":
-                rows = self.read("SELECT * FROM plans WHERE id=?", (plan_id,))
+                rows = c.execute("SELECT * FROM plans WHERE id=?", (plan_id,)).fetchall()
             elif table in {"focus_sessions", "notifications"}:
-                rows = self.read(f"SELECT * FROM {table} WHERE task_id IN (SELECT id FROM tasks WHERE plan_id=?)", (plan_id,))
+                rows = c.execute(f"SELECT * FROM {table} WHERE task_id IN (SELECT id FROM tasks WHERE plan_id=?)", (plan_id,)).fetchall()
             else:
-                rows = self.read(f"SELECT * FROM {table} WHERE plan_id=?", (plan_id,))
-            result[table] = rows
+                rows = c.execute(f"SELECT * FROM {table} WHERE plan_id=?", (plan_id,)).fetchall()
+            result[table] = [dict(row) for row in rows]
         return result
+
+    @staticmethod
+    def _version(c, plan_id, kind, before):
+        after = Store._snapshot_in_transaction(c, plan_id)
+        revision = c.execute("SELECT revision FROM plans WHERE id=?", (plan_id,)).fetchone()[0]
+        c.execute("INSERT INTO plan_versions VALUES (?,?,?,?,?,?,?)", (new_id(), plan_id, kind,
+                  json.dumps(before, ensure_ascii=False), json.dumps(after, ensure_ascii=False), revision, now()))
+
+    def save_draft(self, draft):
+        from desktop.planning import PlanningDraft
+        draft = PlanningDraft.model_validate(draft.model_dump())
+        with self.write() as c:
+            c.execute("INSERT INTO planning_drafts VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET data_json=excluded.data_json,updated_at=excluded.updated_at",
+                      (draft.id, draft.model_dump_json(), now()))
+
+    def drafts(self):
+        from desktop.planning import PlanningDraft
+        return [PlanningDraft.model_validate_json(row["data_json"]) for row in self.read("SELECT * FROM planning_drafts ORDER BY updated_at DESC")]
+
+    def delete_draft(self, draft_id):
+        with self.write() as c:
+            c.execute("DELETE FROM planning_drafts WHERE id=?", (draft_id,))
+            c.execute("DELETE FROM planning_events WHERE draft_id=?", (draft_id,))
+
+    def planning_event(self, draft_id, stage, provenance):
+        metrics = provenance.get("metrics", {})
+        safe = dict(stage=stage, connection_name=provenance.get("connection_name", ""), model=provenance.get("model", ""),
+                    metrics={key: metrics[key] for key in ("attempts", "input_tokens", "output_tokens", "latency_ms", "success", "error_category") if key in metrics})
+        with self.write() as c:
+            c.execute("INSERT INTO planning_events VALUES (?,?,?,?)", (new_id(), draft_id, json.dumps(safe, ensure_ascii=False), now()))
+        return safe
+
+    def brief(self, plan_id):
+        rows = self.read("SELECT data_json FROM plan_briefs WHERE plan_id=?", (plan_id,))
+        return json.loads(rows[0]["data_json"]) if rows else None
+
+    def versions(self, plan_id):
+        return self.read("SELECT * FROM plan_versions WHERE plan_id=? ORDER BY rowid DESC", (plan_id,))
+
+    def set_task_lock(self, task_id, locked):
+        from desktop.planning import protection_reason
+        rows = [row for row in self.tasks() if row["id"] == task_id]
+        if not rows:
+            raise ValueError("找不到任务")
+        row = rows[0]
+        if not locked and protection_reason({**row, "ai_locked": 0}, self.reviews(row["plan_id"])):
+            raise ValueError("已有学习记录或已复盘的任务不能解除保护")
+        with self.write() as c:
+            c.execute("UPDATE tasks SET ai_locked=? WHERE id=?", (int(locked), task_id))
+            self._touch(c, row["plan_id"])
+
+    def apply_proposal(self, plan_id, proposal, target_ids, expected_revision, *, provenance=None, draft_id=None, brief_update=None):
+        from desktop.planning import validate_brief, validate_proposal
+        if brief_update is not None:
+            validate_brief({"adjustments": [brief_update]})
+        saved = self.get_plan(plan_id)
+        if saved["revision"] != expected_revision:
+            raise ValueError("计划已有变化，请重新生成修改预览")
+        validate_proposal(saved, proposal, target_ids, self.reviews(plan_id))
+        before = self._snapshot(plan_id)
+        with self.write() as c:
+            c.execute("BEGIN IMMEDIATE")
+            if c.execute("SELECT revision FROM plans WHERE id=?", (plan_id,)).fetchone()[0] != expected_revision:
+                raise ValueError("计划已有变化，请重新预览")
+            for change in proposal.changes:
+                c.execute("UPDATE tasks SET payload_json=?,due_date=? WHERE id=? AND plan_id=?",
+                          (change.task.model_dump_json(), change.due_date.isoformat(), change.task_id, plan_id))
+            self._touch(c, plan_id)
+            if provenance:
+                self._event(c, plan_id, "AI局部调整", provenance)
+            if brief_update:
+                meta = self.brief(plan_id) or {"requirements": {"profile": saved["profile"].model_dump()}}
+                meta.setdefault("adjustments", []).append(brief_update)
+                c.execute("INSERT INTO plan_briefs VALUES (?,?,NULL) ON CONFLICT(plan_id) DO UPDATE SET data_json=excluded.data_json",
+                          (plan_id, json.dumps(meta, ensure_ascii=False)))
+            self._version(c, plan_id, "AI局部调整", before)
+            if draft_id:
+                c.execute("DELETE FROM planning_drafts WHERE id=?", (draft_id,))
+
+    def undo_latest(self, plan_id):
+        saved = self.get_plan(plan_id)
+        versions = self.versions(plan_id)
+        if not versions or versions[0]["kind"] not in {"AI局部调整", "周复盘调整"} or versions[0]["expected_revision"] != saved["revision"]:
+            raise ValueError("没有可撤销的调整，或之后已有新记录；不能覆盖当前进度")
+        previous = json.loads(versions[0]["before_json"])
+        before = self._snapshot(plan_id)
+        with self.write() as c:
+            c.execute("BEGIN IMMEDIATE")
+            if c.execute("SELECT revision FROM plans WHERE id=?", (plan_id,)).fetchone()[0] != saved["revision"]:
+                raise ValueError("计划已有变化，请重新检查")
+            # Never delete/reinsert the plan: stable IDs and all unrelated history
+            # survive undo. Revision guard ensures no newer progress is erased.
+            for row in previous["tasks"]:
+                c.execute("UPDATE tasks SET payload_json=?,due_date=?,remind_at=?,ai_locked=? WHERE id=? AND plan_id=?",
+                          (row["payload_json"], row["due_date"], row["remind_at"], row["ai_locked"], row["id"], plan_id))
+            for row in previous["weeks"]:
+                c.execute("UPDATE weeks SET theme=?,milestone=? WHERE plan_id=? AND number=?", (row["theme"], row["milestone"], plan_id, row["number"]))
+            c.execute("DELETE FROM plan_briefs WHERE plan_id=?", (plan_id,))
+            for row in previous["plan_briefs"]:
+                c.execute("INSERT INTO plan_briefs VALUES (?,?,?)", (plan_id, row["data_json"], row["parent_plan_id"]))
+            c.execute("DELETE FROM reviews WHERE plan_id=?", (plan_id,))
+            for row in previous["reviews"]:
+                c.execute("INSERT INTO reviews VALUES (?,?,?)", (plan_id, row["week"], row["summary"]))
+            c.execute("DELETE FROM generation_events WHERE plan_id=?", (plan_id,))
+            for row in previous["generation_events"]:
+                c.execute("INSERT INTO generation_events VALUES (?,?,?,?,?,?,?)", tuple(row[key] for key in ("id", "plan_id", "connection_name", "model", "kind", "metrics_json", "created_at")))
+            c.execute("DELETE FROM undo WHERE plan_id=?", (plan_id,))
+            self._touch(c, plan_id)
+            self._version(c, plan_id, "撤销调整", before)
 
     def export_plan(self, plan_id) -> bytes:
         return json.dumps(self._snapshot(plan_id), ensure_ascii=False, indent=2).encode("utf-8")
 
     @staticmethod
+    def _normalize_snapshot(snapshot):
+        if not isinstance(snapshot, dict):
+            raise ValueError("计划快照必须是对象")
+        if snapshot.get("version") == 2:
+            snapshot["version"] = 3
+            snapshot["plan_briefs"] = []
+            for task in snapshot["tasks"]:
+                task["ai_locked"] = int(bool(task.get("user_modified", 0)))
+        if snapshot.get("version") != 3:
+            raise ValueError("计划文件版本不受支持")
+        return snapshot
+
+    @staticmethod
     def _insert_snapshot(c, snapshot, *, new_ids=False):
         snapshot = json.loads(json.dumps(snapshot))
+        Store._normalize_snapshot(snapshot)
         if new_ids:
             plan_id = new_id()
             task_ids = {r["id"]: new_id() for r in snapshot["tasks"]}
             snapshot["plans"][0]["id"] = plan_id
-            for table in ("weeks", "tasks", "reviews", "generation_events"):
+            for table in ("weeks", "tasks", "reviews", "generation_events", "plan_briefs"):
                 for row in snapshot[table]:
                     row["plan_id"] = plan_id
                     if table == "tasks":
@@ -288,8 +480,11 @@ class Store:
                     row["task_id"] = task_ids[row["task_id"]]
                     if table == "focus_sessions":
                         row["id"] = new_id()
-        for table in ("plans", "weeks", "tasks", "reviews", "generation_events", "focus_sessions", "notifications"):
+        for table in ("plans", "weeks", "tasks", "reviews", "generation_events", "focus_sessions", "notifications", "plan_briefs"):
             for row in snapshot[table]:
+                if table == "plan_briefs":
+                    from desktop.planning import validate_brief
+                    validate_brief(json.loads(row["data_json"]))
                 columns = list(row)
                 # 列名来自本机 schema 的白名单，不能执行导入文件提供的 SQL 名称。
                 allowed = {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
@@ -305,7 +500,7 @@ class Store:
             data = json.loads(content.decode("utf-8-sig"))
             if data.get("version") == 1:
                 return self._import_legacy_json(data, start, weekdays)
-            if data.get("format") != "learning-compass-plan" or data.get("version") != 2 or len(data["plans"]) != 1:
+            if data.get("format") != "learning-compass-plan" or data.get("version") not in {2, 3} or len(data["plans"]) != 1:
                 raise ValueError("不是有效的学习罗盘计划文件")
             # 同一事务中验证领域约束；任何失败都会回滚整份导入。
             with self.write() as c:
@@ -321,6 +516,8 @@ class Store:
                 if len(imported_tasks) != saved["profile"].plan_weeks * saved["profile"].days_per_week:
                     raise ValueError("任务数量不一致")
                 for task in imported_tasks:
+                    if task["ai_locked"] not in (0, 1):
+                        raise ValueError("任务锁定状态无效")
                     date.fromisoformat(task["due_date"])
                     if task["remind_at"] is not None:
                         datetime.strptime(task["remind_at"], "%H:%M")
@@ -444,20 +641,22 @@ class Store:
                     c.execute("UPDATE weeks SET theme=?,milestone=? WHERE plan_id=? AND number=?", (future.theme, future.milestone, plan_id, future.week_number))
                     for task in future.tasks:
                         old = next(t for t in saved["tasks"] if (t["week"], t["day"]) == (future.week_number, task.day))
-                        if old["user_modified"] or old["status"] != "未开始" or old["focus_seconds"] or old["manual_seconds"] or old["note"] or old["difficulty"] is not None:
+                        from desktop.planning import protection_reason
+                        if protection_reason(old, self.reviews(plan_id)):
                             if task != old["task"]:
                                 raise ValueError("调整不能覆盖已开始或手动修改的任务")
                         else:
-                            c.execute("DELETE FROM tasks WHERE id=?", (old["id"],))
-                            c.execute("INSERT INTO tasks (id,plan_id,week,day,payload_json,due_date,remind_at) VALUES (?,?,?,?,?,?,?)",
-                                      (new_id(), plan_id, future.week_number, task.day, task.model_dump_json(), old["due_date"], old["remind_at"]))
+                            c.execute("UPDATE tasks SET payload_json=? WHERE id=?", (task.model_dump_json(), old["id"]))
             c.execute("INSERT INTO reviews VALUES (?,?,?)", (plan_id, week, summary))
             self._touch(c, plan_id)
             c.execute("INSERT OR REPLACE INTO undo VALUES (?,?,?)", (plan_id, json.dumps(snapshot, ensure_ascii=False), expected_revision + 1))
             if provenance:
                 self._event(c, plan_id, "复盘调整", provenance)
+            self._version(c, plan_id, "周复盘调整", snapshot)
 
     def undo_review(self, plan_id):
+        if self.versions(plan_id):
+            return self.undo_latest(plan_id)
         saved = self.get_plan(plan_id)
         rows = self.read("SELECT * FROM undo WHERE plan_id=?", (plan_id,))
         if not rows or rows[0]["expected_revision"] != saved["revision"]:
@@ -525,7 +724,8 @@ class Store:
         c = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
         c.row_factory = sqlite3.Row
         try:
-            if c.execute("PRAGMA application_id").fetchone()[0] != APP_ID or c.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
+            version = c.execute("PRAGMA user_version").fetchone()[0]
+            if c.execute("PRAGMA application_id").fetchone()[0] != APP_ID or version not in {1, SCHEMA_VERSION}:
                 raise ValueError("不是当前版本的学习罗盘备份")
             if c.execute("PRAGMA integrity_check").fetchone()[0] != "ok" or c.execute("PRAGMA foreign_key_check").fetchall():
                 raise ValueError("备份不完整或已损坏")
@@ -544,6 +744,30 @@ class Store:
                         raise ValueError("备份时间记录不正确")
             for row in c.execute("SELECT data_json FROM connections"):
                 ModelConnection.model_validate_json(row["data_json"])
+            if version == 2:
+                from desktop.planning import PlanningDraft, validate_brief
+                for row in c.execute("SELECT data_json FROM planning_drafts"):
+                    PlanningDraft.model_validate_json(row["data_json"])
+                for row in c.execute("SELECT ai_locked FROM tasks"):
+                    if row[0] not in (0, 1):
+                        raise ValueError("无效的任务锁定状态")
+                for row in c.execute("SELECT data_json FROM plan_briefs"):
+                    validate_brief(json.loads(row[0]))
+                for row in c.execute("SELECT plan_id,before_json,after_json FROM plan_versions"):
+                    for encoded in (row["before_json"], row["after_json"]):
+                        snapshot = json.loads(encoded)
+                        if snapshot == {}:
+                            continue  # Creation has no previous version.
+                        Store._normalize_snapshot(snapshot)
+                        if snapshot.get("format") != "learning-compass-plan" or len(snapshot["plans"]) != 1 or snapshot["plans"][0]["id"] != row["plan_id"]:
+                            raise ValueError("历史所属计划不一致")
+                        for task in snapshot["tasks"]:
+                            DailyTask.model_validate_json(task["payload_json"])
+                            date.fromisoformat(task["due_date"])
+                            if task["plan_id"] != row["plan_id"] or task["ai_locked"] not in (0, 1):
+                                raise ValueError("历史任务不完整")
+                        for brief in snapshot["plan_briefs"]:
+                            validate_brief(json.loads(brief["data_json"]))
             return {table: c.execute(f"SELECT count(*) FROM {table}").fetchone()[0] for table in ("plans", "tasks", "connections")}
         except (sqlite3.Error, ValueError, TypeError, KeyError) as error:
             raise ValueError("无法读取备份文件，可能已损坏或不属于当前桌面版本") from error
@@ -564,6 +788,11 @@ class Store:
             finally:
                 source.close()
                 target.close()
+            self.inspect_backup(temporary)
+            # Migrate only the staging copy; the selected source is never edited.
+            with closing(sqlite3.connect(temporary)) as staged, staged:
+                if staged.execute("PRAGMA user_version").fetchone()[0] == 1:
+                    self._upgrade_v2(staged)
             self.inspect_backup(temporary)
             os.replace(temporary, self.path)
         finally:

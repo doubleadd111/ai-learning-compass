@@ -1,6 +1,7 @@
 """生成调整预览；保护已开始或手动编辑的未来任务。"""
 from models import validate_plan_for_profile
 from weekly_review import decide_week
+from desktop.planning import protection_reason
 
 
 def prepare_review(store, plan_id, gateway, *, cancelled=None):
@@ -15,8 +16,7 @@ def prepare_review(store, plan_id, gateway, *, cancelled=None):
     if week_number == profile.plan_weeks:
         return dict(week=week_number, summary=decision.summary, adjusted=None, revision=saved["revision"], provenance=None)
     future_records = [t for t in saved["tasks"] if t["week"] > week_number]
-    protected = {(t["week"], t["day"]): t for t in future_records
-                 if t["user_modified"] or t["status"] != "未开始" or t["manual_seconds"] or t["focus_seconds"] or t["note"] or t["difficulty"] is not None}
+    protected = {(t["week"], t["day"]): t for t in future_records if protection_reason(t, reviews)}
     open_slots = [t for t in future_records if t["week"] == week_number + 1 and (t["week"], t["day"]) not in protected]
     if len(open_slots) < len(decision.carryover):
         raise ValueError("下一周的保留任务占满了可用学习日，无法安置延期任务。请先调整未来任务或日期。")
