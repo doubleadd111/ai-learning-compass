@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt, QPointF
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QIcon, QPainter, QPalette, QPixmap, QPolygonF
 
 from desktop.ui import ButtonFeedback, button_icon
+from desktop.controls import DropdownStyle
 
 
 LIGHT = dict(bg="#F6F7F9", card="#FFFFFF", ink="#202938", muted="#68758A",
@@ -39,6 +40,10 @@ def compass_icon(size=128):
 def apply_theme(app, choice="system"):
     dark = choice == "dark" or (choice == "system" and app.styleHints().colorScheme() == Qt.ColorScheme.Dark)
     colors = DARK if dark else LIGHT
+    if not hasattr(app, "_dropdown_style"):
+        app._dropdown_style = DropdownStyle("Fusion")
+        app.setStyle(app._dropdown_style)
+    app.setProperty("dropdownColors", colors)
     bg, card, ink, muted, line = (colors[key] for key in ("bg", "card", "ink", "muted", "line"))
     sidebar, accent, hover, selected, pressed = (colors[key] for key in ("sidebar", "accent", "hover", "selected", "pressed"))
     assets = Path(__file__).with_name("assets").as_posix()
@@ -107,7 +112,10 @@ def apply_theme(app, choice="system"):
             background:{card}; border:1px solid {line}; border-radius:8px; padding:9px 10px; min-height:20px;
             selection-background-color:{selected}; selection-color:{ink};
         }}
-        QComboBox:hover, QSpinBox:hover, QDateEdit:hover, QTimeEdit:hover, QLineEdit:hover {{ border-color:{muted}; }}
+        QComboBox:hover {{ border-color:{accent}; background:{hover}; }}
+        QComboBox:on {{ border-color:{accent}; background:{selected}; }}
+        QComboBox:disabled {{ background:{colors['disabled']}; color:{muted}; border-color:{line}; }}
+        QSpinBox:hover, QDateEdit:hover, QTimeEdit:hover, QLineEdit:hover {{ border-color:{muted}; }}
         QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QSpinBox:focus, QDateEdit:focus, QTimeEdit:focus {{ border-color:{accent}; }}
         QTextBrowser#reading {{ background:{card}; border:1px solid {line}; border-radius:12px; padding:16px; font-size:14px; }}
         QFrame#weekDay {{ background:{card}; border:1px solid {line}; border-radius:10px; }}
@@ -128,6 +136,8 @@ def apply_theme(app, choice="system"):
         QSpinBox::down-arrow, QTimeEdit::down-arrow {{ image:url("{assets}/chevron-{variant}.svg"); width:10px; height:9px; }}
         QSpinBox::up-button:hover, QSpinBox::down-button:hover, QTimeEdit::up-button:hover, QTimeEdit::down-button:hover {{ background:{hover}; border-radius:5px; }}
         QComboBox QAbstractItemView {{ background:{card}; color:{ink}; padding:6px; border:1px solid {line}; selection-background-color:{selected}; selection-color:{ink}; outline:0; }}
+        QFrame#softComboPopup {{ background:{card}; border:1px solid {line}; border-radius:12px; }}
+        QListView#softComboList {{ background:transparent; border:0; padding:0; outline:0; }}
         QCheckBox {{ spacing:9px; padding:5px 0; }} QCheckBox:hover {{ color:{accent}; }}
         QCheckBox::indicator {{ width:17px; height:17px; background:{card}; border:1px solid {muted}; border-radius:5px; }}
         QCheckBox::indicator:hover {{ border-color:{accent}; background:{hover}; }}

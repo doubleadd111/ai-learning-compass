@@ -1,13 +1,15 @@
 """Non-modal planning workspace: explicit paid actions, autosaved drafts."""
 from __future__ import annotations
 
+from desktop.controls import SoftComboBox as QComboBox
+
 import json
 from datetime import date, datetime
 from html import escape
 
 from PySide6.QtCore import QDate, Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFormLayout, QHBoxLayout,
+from PySide6.QtWidgets import (QCheckBox, QDialog, QFormLayout, QHBoxLayout,
     QInputDialog, QLabel, QLineEdit, QListWidget, QMessageBox, QPlainTextEdit, QPushButton,
     QScrollArea, QStackedWidget, QTextBrowser, QToolButton, QTreeWidget, QTreeWidgetItem, QHeaderView, QVBoxLayout, QWidget)
 from shiboken6 import isValid

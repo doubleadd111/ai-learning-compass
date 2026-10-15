@@ -8,7 +8,7 @@ from time import monotonic
 
 from PySide6.QtCore import Qt, QThreadPool, QTimer, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
-from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
+from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QFileDialog, QFrame,
     QHBoxLayout, QHeaderView, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMainWindow,
     QMenu, QMessageBox, QPushButton, QProgressBar, QScrollArea, QSpinBox, QStackedWidget,
     QSystemTrayIcon, QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget, QLineEdit,
@@ -26,6 +26,7 @@ from desktop.review import prepare_review
 from desktop.system import set_autostart
 from desktop.theme import apply_theme, compass_icon
 from desktop.ui import button_icon
+from desktop.controls import SoftComboBox as QComboBox
 from desktop.workers import Worker
 from desktop.guide import open_guide, close_guide
 from desktop.planning import PlanningDraft, modification_context

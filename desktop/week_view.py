@@ -4,11 +4,12 @@ from html import escape
 
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QColor, QPalette
-from PySide6.QtWidgets import (QApplication, QComboBox, QFrame, QGridLayout, QHBoxLayout, QHeaderView,
+from PySide6.QtWidgets import (QApplication, QFrame, QGridLayout, QHBoxLayout, QHeaderView,
     QLabel, QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QTextBrowser,
     QStyledItemDelegate, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from desktop.models import DesktopProfile
+from desktop.controls import SoftComboBox as QComboBox
 
 
 def text(value, muted=False):

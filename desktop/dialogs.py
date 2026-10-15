@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from desktop.controls import SoftComboBox as QComboBox
+
 from datetime import date
 from html import escape
 
 from PySide6.QtCore import QDate, QTime, Qt
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox,
+from PySide6.QtWidgets import (QCheckBox, QDateEdit, QDialog, QDialogButtonBox,
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QSpinBox,
     QTextBrowser, QTimeEdit, QVBoxLayout, QWidget)
 
