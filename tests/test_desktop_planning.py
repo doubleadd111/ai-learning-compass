@@ -278,7 +278,7 @@ def test_migration_old_backup_and_v2_json_source_are_preserved(tmp_path):
     before = hashlib.sha256(old_backup.read_bytes()).digest()
     migrated = Store(source.directory)
     assert migrated.tasks(pid)[0]["ai_locked"]
-    assert list(migrated.backups.glob("before-schema-2-*.sqlite3"))
+    assert list(migrated.backups.glob("before-schema-3-*.sqlite3"))
     target = Store(tmp_path / "restored")
     target.restore(old_backup)
     assert target.tasks(pid)[0]["task"].title == "旧手动任务"
@@ -302,7 +302,7 @@ def test_failed_migration_never_changes_original_database(tmp_path, monkeypatch)
         Store(source.directory)
     assert source.path.read_bytes() == before
     assert not list(source.directory.glob("upgrade-*.sqlite3"))
-    assert list(source.backups.glob("before-schema-2-*.sqlite3"))
+    assert list(source.backups.glob("before-schema-3-*.sqlite3"))
 
 
 @pytest.mark.parametrize("area", ["brief", "history"])

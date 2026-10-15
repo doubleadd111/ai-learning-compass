@@ -14,7 +14,7 @@ from progress_store import StudyRepository, TaskProgress
 from desktop.models import DesktopProfile, ModelConnection, new_id, schedule_dates
 
 APP_ID = 0x4C434D50
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def now() -> str:
@@ -47,15 +47,17 @@ class Store:
     def _initialize(self):
         with closing(self.connect()) as probe:
             old_version = probe.execute("PRAGMA user_version").fetchone()[0]
-            if old_version == 1 and probe.execute("PRAGMA application_id").fetchone()[0] != APP_ID:
+            if old_version in (1, 2) and probe.execute("PRAGMA application_id").fetchone()[0] != APP_ID:
                 raise ValueError("不是学习罗盘桌面数据库")
-        if old_version == 1:
-            self.backup_to(self.backups / f"before-schema-2-{new_id()}.sqlite3")
+        if old_version in (1, 2):
+            self.backup_to(self.backups / f"before-schema-{SCHEMA_VERSION}-{new_id()}.sqlite3")
             staged_path = self.directory / f"upgrade-{new_id()}.sqlite3"
             try:
                 self.backup_to(staged_path)
                 with closing(sqlite3.connect(staged_path)) as staged, staged:
-                    self._upgrade_v2(staged)
+                    if old_version == 1:
+                        self._upgrade_v2(staged)
+                    self._upgrade_v3(staged)
                 self.inspect_backup(staged_path)
                 os.replace(staged_path, self.path)
             finally:
@@ -107,6 +109,7 @@ class Store:
             c.execute(f"PRAGMA application_id={APP_ID}")
             c.execute("PRAGMA user_version=1")
             self._upgrade_v2(c)
+            self._upgrade_v3(c)
         c.close()
 
     @staticmethod
@@ -130,6 +133,14 @@ class Store:
             Store._normalize_snapshot(data)
             c.execute("UPDATE undo SET snapshot_json=? WHERE plan_id=?", (json.dumps(data, ensure_ascii=False), row[0]))
         c.execute("PRAGMA user_version=2")
+
+    @staticmethod
+    def _upgrade_v3(c):
+        if not c.in_transaction:
+            c.execute("BEGIN IMMEDIATE")
+        # Unknown creation times of existing drafts must not be fabricated.
+        c.execute("ALTER TABLE planning_drafts ADD COLUMN created_at TEXT")
+        c.execute("PRAGMA user_version=3")
 
     def read(self, sql, params=()):
         c = self.connect()
@@ -346,8 +357,20 @@ class Store:
         from desktop.planning import PlanningDraft
         draft = PlanningDraft.model_validate(draft.model_dump())
         with self.write() as c:
-            c.execute("INSERT INTO planning_drafts VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET data_json=excluded.data_json,updated_at=excluded.updated_at",
-                      (draft.id, draft.model_dump_json(), now()))
+            previous = c.execute("SELECT data_json FROM planning_drafts WHERE id=?", (draft.id,)).fetchone()
+            body = draft.model_dump(mode="json", exclude={"revision"})
+            if previous:
+                old_body = PlanningDraft.model_validate_json(previous[0]).model_dump(mode="json", exclude={"revision"})
+                if old_body == body:
+                    return
+            stamp = now()
+            c.execute("INSERT INTO planning_drafts (id,data_json,updated_at,created_at) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET data_json=excluded.data_json,updated_at=excluded.updated_at",
+                      (draft.id, draft.model_dump_json(), stamp, stamp))
+
+    def draft_entries(self):
+        from desktop.planning import PlanningDraft
+        return [dict(draft=PlanningDraft.model_validate_json(row["data_json"]), created_at=row["created_at"], updated_at=row["updated_at"])
+                for row in self.read("SELECT * FROM planning_drafts ORDER BY updated_at DESC")]
 
     def drafts(self):
         from desktop.planning import PlanningDraft
@@ -725,7 +748,7 @@ class Store:
         c.row_factory = sqlite3.Row
         try:
             version = c.execute("PRAGMA user_version").fetchone()[0]
-            if c.execute("PRAGMA application_id").fetchone()[0] != APP_ID or version not in {1, SCHEMA_VERSION}:
+            if c.execute("PRAGMA application_id").fetchone()[0] != APP_ID or version not in {1, 2, SCHEMA_VERSION}:
                 raise ValueError("不是当前版本的学习罗盘备份")
             if c.execute("PRAGMA integrity_check").fetchone()[0] != "ok" or c.execute("PRAGMA foreign_key_check").fetchall():
                 raise ValueError("备份不完整或已损坏")
@@ -744,10 +767,15 @@ class Store:
                         raise ValueError("备份时间记录不正确")
             for row in c.execute("SELECT data_json FROM connections"):
                 ModelConnection.model_validate_json(row["data_json"])
-            if version == 2:
+            if version >= 2:
                 from desktop.planning import PlanningDraft, validate_brief
                 for row in c.execute("SELECT data_json FROM planning_drafts"):
                     PlanningDraft.model_validate_json(row["data_json"])
+                if version >= 3:
+                    for row in c.execute("SELECT created_at,updated_at FROM planning_drafts"):
+                        for stamp in row:
+                            if stamp:
+                                datetime.fromisoformat(stamp)
                 for row in c.execute("SELECT ai_locked FROM tasks"):
                     if row[0] not in (0, 1):
                         raise ValueError("无效的任务锁定状态")
@@ -793,6 +821,8 @@ class Store:
             with closing(sqlite3.connect(temporary)) as staged, staged:
                 if staged.execute("PRAGMA user_version").fetchone()[0] == 1:
                     self._upgrade_v2(staged)
+                if staged.execute("PRAGMA user_version").fetchone()[0] == 2:
+                    self._upgrade_v3(staged)
             self.inspect_backup(temporary)
             os.replace(temporary, self.path)
         finally:

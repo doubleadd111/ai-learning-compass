@@ -19,7 +19,7 @@ from desktop.theme import apply_theme
 from desktop.window import MainWindow
 from desktop.guide import GuideWindow
 from desktop.planning import PlanningDraft, PlanningTurn, PlanOutline, OutlinePoint, ClarificationQuestion, RevisionProposal, TaskChange, modification_context
-from desktop.planning_ui import PlanningWindow, HistoryWindow
+from desktop.planning_ui import PlanningWindow, HistoryWindow, DraftsDialog
 from datetime import date
 
 
@@ -46,6 +46,16 @@ with tempfile.TemporaryDirectory() as directory:
             if app.focusWidget():
                 app.focusWidget().clearFocus()
             window.grab().save(str(output / f"{theme}-{page}.png"))
+        window.navigate(2)
+        window.week_panel.select_task(store.tasks()[0]["id"])
+        window.week_panel.mode.setCurrentIndex(1)
+        app.processEvents()
+        window.grab().save(str(output / f"{theme}-week-table.png"))
+        window.week_panel.mode.setCurrentIndex(0)
+        window.resize(980, 680)
+        app.processEvents()
+        window.grab().save(str(output / f"{theme}-week-compact.png"))
+        window.resize(1220, 820)
         window.navigate(4)
         hover_button = next(button for button in window.findChildren(QPushButton) if button.text() == "测试连接（使用额度）")
         QApplication.sendEvent(hover_button, QEvent(QEvent.Type.Enter))
@@ -125,6 +135,11 @@ with tempfile.TemporaryDirectory() as directory:
         app.processEvents()
         flow.grab().save(str(output / f"{theme}-revision.png"))
         flow.close()
+        drafts = DraftsDialog(store, window)
+        drafts.show()
+        app.processEvents()
+        drafts.grab().save(str(output / f"{theme}-drafts.png"))
+        drafts.close()
         history = HistoryWindow(store, saved["id"], window)
         history.show()
         app.processEvents()

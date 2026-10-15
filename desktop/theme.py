@@ -48,6 +48,8 @@ def apply_theme(app, choice="system"):
         app.installEventFilter(app._button_feedback)
     app.setProperty("iconColor", muted)
     app.setProperty("accentColor", accent)
+    app.setProperty("statusColors", {"未开始": muted, "进行中": accent,
+                                     "已完成": colors["good"], "延期": colors["danger"]})
     pal = QPalette()
     for role, color in ((QPalette.ColorRole.Window, bg), (QPalette.ColorRole.Base, card),
                         (QPalette.ColorRole.AlternateBase, bg), (QPalette.ColorRole.Text, ink),
@@ -78,6 +80,7 @@ def apply_theme(app, choice="system"):
         QFrame#card, QFrame#focusCard {{ background:{card}; border:1px solid {line}; border-radius:14px; }}
         QFrame#card[currentDay="true"] {{ border:1px solid {accent}; background:{hover}; }}
         QPushButton {{ background:{card}; border:1px solid {line}; padding:9px 16px; border-radius:9px; min-height:20px; }}
+        QPushButton#taskFocus {{ padding:5px 10px; min-height:20px; border-radius:7px; }}
         QPushButton:hover, QPushButton[hovered="true"] {{ background:{hover}; border-color:{accent}; color:{accent}; }}
         QPushButton:pressed {{ background:{pressed}; border-color:{accent}; color:{accent}; }}
         QPushButton:focus {{ border:1px solid {accent}; }}
@@ -107,6 +110,14 @@ def apply_theme(app, choice="system"):
         QComboBox:hover, QSpinBox:hover, QDateEdit:hover, QTimeEdit:hover, QLineEdit:hover {{ border-color:{muted}; }}
         QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QSpinBox:focus, QDateEdit:focus, QTimeEdit:focus {{ border-color:{accent}; }}
         QTextBrowser#reading {{ background:{card}; border:1px solid {line}; border-radius:12px; padding:16px; font-size:14px; }}
+        QFrame#weekDay {{ background:{card}; border:1px solid {line}; border-radius:10px; }}
+        QFrame#weekDay[currentDay="true"] {{ border-color:{accent}; }}
+        QFrame#weekTask {{ background:{bg}; border:1px solid {line}; border-radius:8px; }}
+        QFrame#weekTask:hover, QFrame#weekTask[selected="true"], QFrame#weekTask:focus {{ border-color:{accent}; }}
+        QLabel#taskStatus {{ color:{muted}; }}
+        QLabel#taskStatus[taskState="进行中"] {{ color:{accent}; }}
+        QLabel#taskStatus[taskState="已完成"] {{ color:{colors['good']}; }}
+        QLabel#taskStatus[taskState="延期"] {{ color:{colors['danger']}; }}
         QComboBox {{ padding-right:28px; }} QComboBox::drop-down {{ border:0; width:28px; }}
         QComboBox::down-arrow, QDateEdit::down-arrow {{ image:url("{assets}/chevron-{variant}.svg"); width:14px; height:14px; }}
         QSpinBox, QTimeEdit {{ padding-right:28px; }}

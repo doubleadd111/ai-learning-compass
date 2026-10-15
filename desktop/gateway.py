@@ -12,6 +12,7 @@ from curriculum import curriculum_prompt
 from models import StudyPlan, validate_plan_for_profile
 from planner import STUDY_PLAN_SCHEMA
 from desktop.models import DesktopProfile, ModelConnection
+from desktop.diagnostics import ConnectionDiagnostic, MESSAGES, classify
 from desktop.network import (Cancelled, CancellableTransport, RequestControl,
                              TEST_TIMEOUT, MODELS_TIMEOUT, GENERATE_TIMEOUT)
 
@@ -49,6 +50,9 @@ def user_prompt(profile, context="", correction=""):
 
 
 def friendly_error(error):
+    category, _types = classify(error)
+    if category in {"runtime_dependency", "tls", "dns", "proxy"}:
+        return MESSAGES[category], category
     if isinstance(error, APITimeoutError):
         return "模型服务响应超时，请检查网络或稍后重试。", "timeout"
     if isinstance(error, RateLimitError):
@@ -69,12 +73,15 @@ def friendly_error(error):
 class ModelGateway:
     def __init__(self, connection: ModelConnection, api_key: str, *, client=None):
         self.connection = connection.model_copy(deep=True)
+        self.last_diagnostic = None
         if not api_key.strip():
             raise GatewayError("请先在模型设置中填写这套配置的 API Key。")
+        if not api_key.strip().isascii() or any(char in api_key.strip() for char in "\r\n"):
+            raise GatewayError("密钥含无效字符或换行，请在API Key栏重新填写；不要附带引号或说明文字。")
         self.control = RequestControl()
         self.client = client or OpenAI(api_key=api_key, base_url=connection.base_url,
                                      max_retries=0, timeout=httpx.Timeout(120, connect=10),
-                                     http_client=httpx.Client(transport=CancellableTransport(self.control), trust_env=False, follow_redirects=True))
+                                     http_client=httpx.Client(transport=CancellableTransport(self.control, network_mode=connection.network_mode), trust_env=False, follow_redirects=True))
 
     def cancel(self):
         self.control.cancel()
@@ -83,6 +90,30 @@ class ModelGateway:
         self.client.close()
 
     def request(self, system, prompt, schema, name, max_tokens):
+        return self._observe(name, lambda: self._request(system, prompt, schema, name, max_tokens))
+
+    def _observe(self, operation, function):
+        started = perf_counter()
+        self.control.operation = operation
+        category, names = "success", []
+        status = None
+        try:
+            return function()
+        except Cancelled:
+            category = "cancelled"
+            raise
+        except Exception as error:
+            category, names = classify(error)
+            status = getattr(error, "status_code", None)
+            if isinstance(error, (APIStatusError, APIConnectionError)):
+                raise
+            raise GatewayError(MESSAGES.get(category, "模型请求未完成，请复制连接诊断并检查配置。")) from None
+        finally:
+            self.last_diagnostic = ConnectionDiagnostic(operation=operation, stage=self.control.stage,
+                elapsed_ms=round((perf_counter() - started) * 1000), http_status=self.control.response_status or status,
+                category=category, exception_types=names, network_mode=self.connection.network_mode)
+
+    def _request(self, system, prompt, schema, name, max_tokens):
         config = self.connection
         if config.api_type == "responses":
             fmt = {"type": config.output_format}
@@ -127,6 +158,10 @@ class ModelGateway:
                 try:
                     text, usage = self.request(instructions(profile), user_prompt(profile, context, correction),
                                                STUDY_PLAN_SCHEMA, "study_plan", min(24000, max(4000, profile.plan_weeks * profile.days_per_week * 400)))
+                except GatewayError as error:
+                    metrics["error_category"] = self.last_diagnostic.category if self.last_diagnostic else "unknown"
+                    error.provenance = provenance
+                    raise
                 except (APIStatusError, APIConnectionError) as error:
                     if self.control.cancelled.is_set():
                         raise Cancelled() from None
@@ -143,6 +178,8 @@ class ModelGateway:
                     validate_plan_for_profile(plan, profile)
                 except ValueError as error:
                     correction = str(error)
+                    if self.last_diagnostic:
+                        self.last_diagnostic.category = "invalid_output"
                     if attempt == 1:
                         metrics["error_category"] = "invalid_output"
                         raise GatewayError("生成结果连续两次未通过格式或时间校验，请缩短周期或更换模型。", provenance) from None
@@ -180,6 +217,10 @@ class ModelGateway:
                 metrics["attempts"] += 1
                 try:
                     text, usage = self.request(system, prompt + correction, schema, name, 10000)
+                except GatewayError as error:
+                    metrics["error_category"] = self.last_diagnostic.category if self.last_diagnostic else "unknown"
+                    error.provenance = provenance
+                    raise
                 except (APIStatusError, APIConnectionError) as error:
                     if self.control.cancelled.is_set():
                         raise Cancelled() from None
@@ -194,6 +235,8 @@ class ModelGateway:
                     if validate:
                         validate(result)
                 except ValueError as error:
+                    if self.last_diagnostic:
+                        self.last_diagnostic.category = "invalid_output"
                     # Domain validators contain safe, actionable conflict messages;
                     # Pydantic errors may echo raw model output, so keep those private.
                     from pydantic import ValidationError
@@ -239,12 +282,12 @@ class ModelGateway:
     def list_models(self, *, cancelled=None):
         self.control.begin(MODELS_TIMEOUT, cancelled)
         try:
-            return sorted({item.id for item in self.client.with_options(timeout=15).models.list().data})
+            return self._observe("models", lambda: sorted({item.id for item in self.client.with_options(timeout=15).models.list().data}))
         except Exception as error:
             if self.control.cancelled.is_set():
                 raise Cancelled() from None
             message, _ = friendly_error(error)
-            raise GatewayError(message + " 也可以手动填写模型 ID。") from None
+            raise GatewayError(message + " 模型列表获取失败不代表生成接口不可用；也可以手动填写模型 ID。") from None
 
     def test(self, *, cancelled=None):
         self.control.begin(TEST_TIMEOUT, cancelled)
@@ -262,5 +305,9 @@ class ModelGateway:
                     raise GatewayError(f"服务已返回 HTTP {self.control.response_status}，但 {TEST_TIMEOUT} 秒内没有完成 JSON 响应。可能在服务端排队或响应传输中，请稍后重试；未自动重试。") from None
                 raise GatewayError(f"连接测试超过 {TEST_TIMEOUT} 秒或网络响应超时，请检查网络与代理，或稍后重试。") from None
             raise GatewayError(friendly_error(error)[0]) from None
+        except GatewayError:
+            raise
         except ValueError:
+            if self.last_diagnostic:
+                self.last_diagnostic.category = "invalid_output"
             raise GatewayError("服务已响应，但未返回可用 JSON。请更换输出格式或模型。") from None

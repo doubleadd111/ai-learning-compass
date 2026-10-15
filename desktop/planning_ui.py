@@ -2,14 +2,14 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime
 from html import escape
 
 from PySide6.QtCore import QDate, Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFormLayout, QHBoxLayout,
     QInputDialog, QLabel, QLineEdit, QListWidget, QMessageBox, QPlainTextEdit, QPushButton,
-    QScrollArea, QStackedWidget, QTextBrowser, QToolButton, QVBoxLayout, QWidget)
+    QScrollArea, QStackedWidget, QTextBrowser, QToolButton, QTreeWidget, QTreeWidgetItem, QHeaderView, QVBoxLayout, QWidget)
 from shiboken6 import isValid
 
 from desktop.dialogs import PlanDialog, spin
@@ -464,8 +464,6 @@ class PlanningWindow(QDialog):
                 event.ignore()
                 return
         self.closed = True
-        if getattr(self, "_guide_window", None):
-            self._guide_window.close()
         super().closeEvent(event)
 
 
@@ -511,9 +509,16 @@ class DraftsDialog(QDialog):
         self.store = store
         self.selected = None
         self.setWindowTitle("继续草稿")
-        self.resize(580, 430)
+        self.resize(850, 460)
         layout = QVBoxLayout(self)
-        self.list = QListWidget()
+        self.list = QTreeWidget()
+        self.list.setRootIsDecorated(False)
+        self.list.setHeaderLabels(["草稿与阶段", "创建时间", "最后修改时间"])
+        self.list.header().setStretchLastSection(False)
+        self.list.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for column in (1, 2):
+            self.list.header().setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        self.list.itemDoubleClicked.connect(lambda *_: self.choose())
         layout.addWidget(self.list)
         row = QHBoxLayout()
         row.addWidget(action("删除选中草稿", self.remove))
@@ -523,23 +528,29 @@ class DraftsDialog(QDialog):
         self.refresh()
 
     def refresh(self):
-        self.items = self.store.drafts()
+        entries = self.store.draft_entries()
+        self.items = [entry["draft"] for entry in entries]
         self.list.clear()
-        for draft in self.items:
+        for entry in entries:
+            draft = entry["draft"]
             state = {"base": "基础资料", "questions": "关键追问", "outline": "待确认概略", "preview": "待保存预览", "saved": "已保存"}[draft.state]
             goal = draft.base_inputs.get("goal", "") or draft.profile.goal
-            self.list.addItem(f"{'调整' if draft.kind == 'modify' else '创建'} · {draft.profile.subject} · {goal[:45]}\n{state}")
+            def stamp(value):
+                return datetime.fromisoformat(value).astimezone().strftime("%Y-%m-%d %H:%M") if value else "旧版未记录"
+            item = QTreeWidgetItem([f"{'调整' if draft.kind == 'modify' else '创建'} · {draft.profile.subject} · {goal[:45]}\n{state}", stamp(entry["created_at"]), stamp(entry["updated_at"])])
+            item.setToolTip(0, goal)
+            self.list.addTopLevelItem(item)
         if self.items:
-            self.list.setCurrentRow(0)
+            self.list.setCurrentItem(self.list.topLevelItem(0))
 
     def choose(self):
-        row = self.list.currentRow()
+        row = self.list.indexOfTopLevelItem(self.list.currentItem())
         if row >= 0:
             self.selected = self.items[row]
             self.accept()
 
     def remove(self):
-        row = self.list.currentRow()
+        row = self.list.indexOfTopLevelItem(self.list.currentItem())
         if row >= 0 and QMessageBox.question(self, "删除草稿", "删除这份草稿及其本机问答？正式计划不会改变。") == QMessageBox.StandardButton.Yes:
             self.store.delete_draft(self.items[row].id)
             self.refresh()

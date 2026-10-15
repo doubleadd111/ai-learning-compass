@@ -29,7 +29,7 @@ def fingerprint(connection, columns):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, default=Path(os.environ["LOCALAPPDATA"]) / "LearningCompass" / "learning-compass.sqlite3")
-    parser.add_argument("--report", type=Path, default=ROOT / ".learning_compass" / "qa" / "migration-2026.10.4.json")
+    parser.add_argument("--report", type=Path, default=ROOT / ".learning_compass" / "qa" / "migration-2026.10.5.json")
     args = parser.parse_args()
     source = args.source.resolve()
     original_hash = hashlib.sha256(source.read_bytes()).hexdigest()

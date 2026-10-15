@@ -1,6 +1,6 @@
 """Code-drawn navigation icons and shared, keyboard-friendly button feedback."""
 from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap, QTextCursor, QTextBlockFormat
 from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QPushButton, QToolButton
 
 
@@ -13,6 +13,26 @@ def readable_document(browser):
         h3 { margin-top:18px; margin-bottom:12px; }
         td { vertical-align:top; }
     """)
+
+
+def format_reading_blocks(browser):
+    """Markdown import ignores the document CSS: apply actual block formats."""
+    block = browser.document().begin()
+    while block.isValid():
+        fmt = block.blockFormat()
+        level = fmt.headingLevel()
+        # Preserve code indentation, whitespace and monospace formatting.
+        if not fmt.nonBreakableLines():
+            fmt.setLineHeight(150, QTextBlockFormat.LineHeightTypes.ProportionalHeight.value)
+            fmt.setTopMargin(18 if level else 0)
+            fmt.setBottomMargin(14 if level else 12)
+            if block.textList():
+                fmt.setTextIndent(0)
+            elif not level:
+                fmt.setTextIndent(28)
+            cursor = QTextCursor(block)
+            cursor.setBlockFormat(fmt)
+        block = block.next()
 
 
 def line_icon(name, color, accent="#356CF6"):

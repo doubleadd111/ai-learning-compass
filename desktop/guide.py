@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QTextBrowser, QVBoxLayout
 
 from desktop import VERSION
-from desktop.ui import readable_document
+from desktop.ui import readable_document, format_reading_blocks
 
 CHAPTERS = {
     "quickstart": "首次体验", "models": "接入自己的模型", "create": "创建学习计划",
@@ -27,7 +27,8 @@ def guide_sections():
 
 class GuideWindow(QDialog):
     def __init__(self, parent=None):
-        super().__init__(parent, Qt.WindowType.Window)
+        super().__init__(None, Qt.WindowType.Window | Qt.WindowType.WindowMinMaxButtonsHint | Qt.WindowType.WindowCloseButtonHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
         self.setWindowTitle(f"使用指南 · 学习罗盘 {VERSION}")
         self.resize(900, 680)
         self.setMinimumSize(680, 480)
@@ -75,22 +76,38 @@ class GuideWindow(QDialog):
         if item:
             key = item.data(Qt.ItemDataRole.UserRole)
             self.browser.setMarkdown(self.sections[key][1])
+            format_reading_blocks(self.browser)
             if self.search.text().strip():
                 self.browser.find(self.search.text().strip())
 
-    def go(self, chapter="quickstart"):
-        self.search.clear()
-        for row in range(self.toc.count()):
-            if self.toc.item(row).data(Qt.ItemDataRole.UserRole) == chapter:
-                self.toc.setCurrentRow(row)
-                break
-        self.show()
+    def go(self, chapter=None):
+        if chapter is not None:
+            self.search.clear()
+            for row in range(self.toc.count()):
+                if self.toc.item(row).data(Qt.ItemDataRole.UserRole) == chapter:
+                    self.toc.setCurrentRow(row)
+                    break
+        if self.isMinimized():
+            self.showNormal()
+        else:
+            self.show()
         self.raise_()
         self.activateWindow()
 
 
-def open_guide(owner, chapter="quickstart"):
-    if not getattr(owner, "_guide_window", None):
-        owner._guide_window = GuideWindow(owner)
-    owner._guide_window.go(chapter)
-    return owner._guide_window
+def open_guide(owner, chapter=None):
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance()
+    if not getattr(app, "_learning_guide", None):
+        app._learning_guide = GuideWindow()
+    # Alias retained for callers/tests; lifetime and window ownership are global.
+    owner._guide_window = app._learning_guide
+    app._learning_guide.go(chapter)
+    return app._learning_guide
+
+
+def close_guide():
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance()
+    if getattr(app, "_learning_guide", None):
+        app._learning_guide.close()

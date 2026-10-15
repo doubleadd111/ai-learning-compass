@@ -6,14 +6,34 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import ssl
 import threading
 from time import monotonic
 
+import certifi
 import httpx
 
 TEST_TIMEOUT = 30
 MODELS_TIMEOUT = 15
 GENERATE_TIMEOUT = 240
+
+
+def tls_context():
+    """Honor an explicit CA override; otherwise trust Windows and public roots.
+
+    HTTPX's certifi-only default omits Windows-installed proxy/enterprise CAs.
+    Using the OS trust store does not trust arbitrary peer certificates: both
+    certificate-chain verification and hostname verification remain required.
+    Explicit SSL_CERT_FILE/DIR intentionally replaces, rather than expands,
+    that trust policy. Certificate policy is independent of proxy routing.
+    """
+    cafile, capath = os.environ.get("SSL_CERT_FILE"), os.environ.get("SSL_CERT_DIR")
+    if cafile or capath:
+        return ssl.create_default_context(cafile=cafile or None, capath=capath or None)
+    context = ssl.create_default_context()
+    context.load_verify_locations(cafile=certifi.where())
+    return context
 
 
 class Cancelled(Exception):
@@ -30,6 +50,7 @@ class RequestControl:
         self.stage = "准备请求"
         self.response_status = None
         self.received_bytes = 0
+        self.operation = "request"
 
     def cancel(self):
         self.cancelled.set()
@@ -42,15 +63,18 @@ class RequestControl:
 
 
 class CancellableTransport(httpx.BaseTransport):
-    def __init__(self, control: RequestControl, *, async_transport=None):
+    def __init__(self, control: RequestControl, *, async_transport=None, network_mode="system"):
         self.control = control
         self.async_transport = async_transport
+        self.network_mode = network_mode
 
     def handle_request(self, request):
         async def exchange():
             self.control.stage = "连接服务"
             # AsyncClient 自行读取环境代理；外层同步 Client 禁用代理以避免绕过此传输。
             async with httpx.AsyncClient(transport=self.async_transport,
+                                        trust_env=self.network_mode != "direct",
+                                        verify=tls_context(),
                                         timeout=httpx.Timeout(120, connect=10)) as client:
                 async with client.stream(request.method, request.url, headers=request.headers,
                                          content=request.content) as response:

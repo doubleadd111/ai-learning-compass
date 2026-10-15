@@ -144,9 +144,13 @@ class ConnectionDialog(QDialog):
         self.output.addItem("JSON 模式（兼容性更广）", "json_object")
         self.token_field = QComboBox()
         self.token_field.addItems(["max_tokens", "max_completion_tokens"])
+        self.network_mode = QComboBox()
+        self.network_mode.addItem("默认代理（保持原路由）", "system")
+        self.network_mode.addItem("直连（不使用环境代理）", "direct")
         for label, widget in (("服务商", self.provider), ("配置名称", self.name), ("服务地址", self.url),
                               ("模型 ID", self.model), ("API Key", self.key), ("", self.remember),
-                              ("接口类型", self.api), ("输出格式", self.output), ("Chat 输出上限字段", self.token_field)):
+                              ("接口类型", self.api), ("输出格式", self.output), ("Chat 输出上限字段", self.token_field),
+                              ("高级：网络路由", self.network_mode)):
             form.addRow(label, widget)
         layout.addLayout(form)
         self.api.currentIndexChanged.connect(lambda _index: form.setRowVisible(self.token_field, self.api.currentData() == "chat"))
@@ -163,6 +167,7 @@ class ConnectionDialog(QDialog):
             self.api.setCurrentIndex(self.api.findData(existing.api_type))
             self.output.setCurrentIndex(self.output.findData(existing.output_format))
             self.token_field.setCurrentText(existing.max_tokens_field)
+            self.network_mode.setCurrentIndex(self.network_mode.findData(existing.network_mode))
         else:
             self.preset("DeepSeek")
         form.setRowVisible(self.token_field, self.api.currentData() == "chat")
@@ -180,7 +185,7 @@ class ConnectionDialog(QDialog):
     def config(self):
         values = dict(name=self.name.text().strip(), provider=self.provider.currentText(), base_url=self.url.text(),
                       model=self.model.text().strip(), api_type=self.api.currentData(), output_format=self.output.currentData(),
-                      max_tokens_field=self.token_field.currentText())
+                      max_tokens_field=self.token_field.currentText(), network_mode=self.network_mode.currentData())
         if self.existing:
             values["id"] = self.existing.id
         return ModelConnection(**values)

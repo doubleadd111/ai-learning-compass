@@ -1,6 +1,7 @@
 """全部为本机服务或 HTTP Mock，不使用真实 API Key。"""
 import asyncio
 import gzip
+import ssl
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
 from time import monotonic
@@ -14,6 +15,27 @@ from desktop.models import ModelConnection
 from desktop.network import Cancelled, CancellableTransport, RequestControl
 from tests.test_progress_store import sample_plan, sample_profile
 from desktop.models import DesktopProfile
+
+
+def test_tls_uses_system_and_public_roots_without_disabling_verification(monkeypatch):
+    from desktop.network import tls_context
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.delenv("SSL_CERT_DIR", raising=False)
+    context = tls_context()
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname is True
+    assert len(context.get_ca_certs()) > 0
+
+
+def test_tls_explicit_ca_policy_is_not_silently_expanded(monkeypatch):
+    from desktop.network import tls_context
+    calls = []
+    marker = object()
+    monkeypatch.setenv("SSL_CERT_FILE", "explicit-private-ca.pem")
+    monkeypatch.setenv("SSL_CERT_DIR", "explicit-private-ca-directory")
+    monkeypatch.setattr(ssl, "create_default_context", lambda **kwargs: calls.append(kwargs) or marker)
+    assert tls_context() is marker
+    assert calls == [{"cafile": "explicit-private-ca.pem", "capath": "explicit-private-ca-directory"}]
 
 
 @pytest.mark.parametrize("gzip_body", [False, True])

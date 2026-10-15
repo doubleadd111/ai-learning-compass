@@ -27,9 +27,11 @@ from desktop.system import set_autostart
 from desktop.theme import apply_theme, compass_icon
 from desktop.ui import button_icon
 from desktop.workers import Worker
-from desktop.guide import open_guide
+from desktop.guide import open_guide, close_guide
 from desktop.planning import PlanningDraft, modification_context
 from desktop.planning_ui import PlanningWindow, ModificationDialog, DraftsDialog, HistoryWindow
+from desktop.week_view import WeekPanel, attach_focus_button
+from desktop.diagnostics import ConnectionDiagnostic
 
 
 def label(text, *, name=None, wrap=False):
@@ -74,11 +76,12 @@ def page_layout():
 
 def task_tree():
     tree = QTreeWidget()
-    tree.setHeaderLabels(["任务", "日期", "预计", "状态"])
+    tree.setHeaderLabels(["任务", "日期", "预计", "状态", "操作"])
     tree.setRootIsDecorated(False)
     tree.setAlternatingRowColors(True)
+    tree.header().setStretchLastSection(False)
     tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-    for column in (1, 2, 3):
+    for column in (1, 2, 3, 4):
         tree.header().setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
     return tree
 
@@ -100,6 +103,7 @@ class MainWindow(QMainWindow):
         self.focus = FocusTimer(store)
         self.worker = None
         self.active_gateway = None
+        self.last_diagnostic = None
         self.request_timer = QTimer(self)
         self.request_timer.setSingleShot(True)
         self.request_timer.setTimerType(Qt.TimerType.PreciseTimer)
@@ -196,6 +200,9 @@ class MainWindow(QMainWindow):
         self.notice.setWordWrap(True)
         self.notice.hide()
         body_layout.addWidget(self.notice)
+        self.diagnostic_button = button("复制连接诊断", self.copy_diagnostic)
+        self.diagnostic_button.hide()
+        body_layout.addWidget(self.diagnostic_button, 0, Qt.AlignmentFlag.AlignLeft)
         busy_row = QHBoxLayout()
         self.busy = StatusLabel()
         self.busy.setWordWrap(True)
@@ -313,10 +320,9 @@ class MainWindow(QMainWindow):
         self.week_heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(horizontal(previous, self.week_heading,
                                    button("本周", lambda: self.change_week(0)), following))
-        layout.addWidget(label("按真实日期查看所有进行中的计划；双击任务可改期和填写记录。", name="muted", wrap=True))
-        self.week_tree = task_tree()
-        self.week_tree.itemDoubleClicked.connect(self.edit_tree_task)
-        layout.addWidget(self.week_tree, 1)
+        self.week_panel = WeekPanel(self.store, self.start_focus_for_task, self.edit_task_id)
+        self.week_tree = self.week_panel.table
+        layout.addWidget(self.week_panel, 1)
         self.stack.addWidget(page)
 
     def _focus_page(self):
@@ -502,10 +508,11 @@ class MainWindow(QMainWindow):
     def fill_tasks(self, tree, rows):
         tree.clear()
         for task in rows:
-            item = QTreeWidgetItem([task["task"].title, task["due_date"], f"{task['task'].duration_minutes} 分钟", task["status"]])
+            item = QTreeWidgetItem([task["task"].title, task["due_date"], f"{task['task'].duration_minutes} 分钟", task["status"], ""])
             item.setData(0, Qt.ItemDataRole.UserRole, task["id"])
             item.setToolTip(0, f"{task['plan_title']} · 第{task['week']}周第{task['day']}天\n{task['task'].description}\n产出：{task['task'].deliverable}")
             tree.addTopLevelItem(item)
+            attach_focus_button(tree, item, 4, task, self.start_focus_for_task)
 
     def refresh_library(self, *_args):
         previous = self.selected_plan_id
@@ -554,9 +561,8 @@ class MainWindow(QMainWindow):
         today = date.today()
         start = today - timedelta(days=today.weekday()) + timedelta(weeks=self.week_offset)
         end = start + timedelta(days=6)
-        self.week_heading.setText(f"{start:%m月%d日} — {end:%m月%d日}")
-        rows = [t for t in self.store.tasks() if not t["archived"] and start.isoformat() <= t["due_date"] <= end.isoformat()]
-        self.fill_tasks(self.week_tree, rows)
+        self.week_heading.setText(f"{start:%Y年%m月%d日} — {end:%m月%d日}")
+        self.week_panel.refresh(start)
 
     def select_model(self, *_args):
         if self.model_picker.currentData():
@@ -586,6 +592,7 @@ class MainWindow(QMainWindow):
         worker.signals.failed.connect(lambda message: self.request_failed(worker, message))
         worker.signals.finished.connect(lambda: self.work_finished(worker))
         self.request_timeout_seconds = timeout_seconds
+        self.request_started = monotonic()
         self.request_deadline = monotonic() + timeout_seconds
         self.request_message = text
         self.request_timer.start(max(1, int(timeout_seconds * 1000)))
@@ -608,19 +615,29 @@ class MainWindow(QMainWindow):
         if remaining == 0:
             self.request_timed_out()
 
-    def cancel_request(self):
+    def cancel_request(self, category="cancelled"):
         if self.worker:
+            diagnostic = None
             self.worker.cancelled.set()
             if self.active_gateway:
+                control = self.active_gateway.control
+                connection = getattr(self.active_gateway, "connection", None)
+                diagnostic = ConnectionDiagnostic(operation=getattr(control, "operation", "request"), stage=control.stage,
+                    elapsed_ms=round((monotonic() - self.request_started) * 1000),
+                    http_status=control.response_status, category=category, exception_types=[],
+                    network_mode=getattr(connection, "network_mode", "system"))
                 self.active_gateway.cancel()
             self.work_finished(self.worker)
+            if diagnostic:
+                self.last_diagnostic = diagnostic
+                self.diagnostic_button.show()
             self.notice.setText("已取消，可以发起新请求。未完成结果不会保存；服务端已收到的请求仍可能计费。")
 
     def request_timed_out(self):
         if self.worker:
             seconds = self.request_timeout_seconds
             status = self.active_gateway.control.response_status if self.active_gateway else None
-            self.cancel_request()
+            self.cancel_request("timeout")
             detail = f"服务已返回 HTTP {status}，但未在时限内完成响应。" if status is not None else "未在时限内收到服务响应。"
             self.notice.setText(f"请求已超过 {seconds:g} 秒，已停止等待。{detail}可检查网络与代理或稍后重试；旧结果不会保存。")
 
@@ -633,6 +650,10 @@ class MainWindow(QMainWindow):
     def work_finished(self, worker=None):
         if worker is not None and self.worker is not worker:
             return
+        diagnostic = getattr(self.active_gateway, "last_diagnostic", None)
+        if diagnostic:
+            self.last_diagnostic = diagnostic
+            self.diagnostic_button.show()
         self.request_timer.stop()
         self.request_status_timer.stop()
         self.request_countdown.clear()
@@ -641,6 +662,11 @@ class MainWindow(QMainWindow):
         self.active_gateway = None
         self.busy.clear()
         self.cancel_button.hide()
+
+    def copy_diagnostic(self):
+        if self.last_diagnostic:
+            QApplication.clipboard().setText(self.last_diagnostic.summary())
+            self.notice.setText("已复制脱敏连接诊断；不含密钥、认证头或学习内容。")
 
     def create_plan(self):
         config = next((c for c in self.store.connections() if c.id == self.model_picker.currentData()), None)
@@ -717,6 +743,9 @@ class MainWindow(QMainWindow):
         if item is None:
             return
         task_id = item.data(0, Qt.ItemDataRole.UserRole)
+        self.edit_task_id(task_id)
+
+    def edit_task_id(self, task_id):
         row = next((t for t in self.store.tasks() if t["id"] == task_id), None)
         if not row:
             return
@@ -920,6 +949,27 @@ class MainWindow(QMainWindow):
             self.tick()
         self.safe(action)
 
+    def start_focus_for_task(self, task_id):
+        def action():
+            row = next((t for t in self.store.tasks() if t["id"] == task_id), None)
+            if not row or row["archived"] or row["status"] == "已完成":
+                raise ValueError("这项任务已完成、归档或删除，请刷新任务列表。")
+            same = self.focus.phase == "focus" and self.focus.task_id == task_id and self.focus.session_id is not None
+            if not same and (self.focus.session_id or self.focus.phase == "break"):
+                answer = QMessageBox.question(self, "切换专注任务", "结束当前专注或休息，保存已有用时，并开始这项任务？",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Cancel)
+                if answer != QMessageBox.StandardButton.Yes:
+                    return
+                self.focus.stop()
+            self.refresh_focus_tasks()
+            self.focus_task.setCurrentIndex(self.focus_task.findData(task_id))
+            if not same:
+                self.focus.configure(self.focus_minutes.value(), self.break_minutes.value())
+            self.focus.start(task_id)
+            self.navigate(3)
+            self.tick()
+        self.safe(action)
+
     def pause_focus(self):
         self.focus.pause()
         self.tick()
@@ -971,6 +1021,7 @@ class MainWindow(QMainWindow):
                 return
         self.focus.pause()
         self.cancel_request()
+        close_guide()
         self.exiting = True
         if self.tray:
             self.tray.hide()
@@ -991,4 +1042,5 @@ class MainWindow(QMainWindow):
                     return
             self.focus.pause()
             self.cancel_request()
+            close_guide()
             event.accept()

@@ -1,0 +1,62 @@
+"""Allow-listed connection diagnostics: never serialize requests or exception text."""
+from __future__ import annotations
+
+import socket
+import ssl
+from typing import Literal
+
+import httpx
+from pydantic import BaseModel, ConfigDict
+
+
+class ConnectionDiagnostic(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    operation: str
+    stage: str
+    elapsed_ms: int
+    http_status: int | None = None
+    category: str
+    exception_types: list[str]
+    network_mode: Literal["system", "direct"] = "system"
+
+    def summary(self):
+        labels = {"models": "获取模型列表", "connection_test": "JSON连接测试",
+                  "study_plan": "生成计划", "planning_clarification": "需求与概略", "planning_revision": "修改预览"}
+        return (f"操作：{labels.get(self.operation, self.operation)}\n阶段：{self.stage}\n"
+                f"耗时：{self.elapsed_ms} ms\nHTTP：{self.http_status if self.http_status is not None else '未收到'}\n"
+                f"类别：{self.category}\n路由：{'直连' if self.network_mode == 'direct' else '默认代理'}\n"
+                f"异常类型：{' → '.join(self.exception_types) or '无'}")
+
+
+def classify(error):
+    chain, seen = [], set()
+    while error is not None and id(error) not in seen and len(chain) < 8:
+        seen.add(id(error))
+        chain.append(error)
+        error = error.__cause__ or error.__context__
+    if any(isinstance(e, (ImportError, ModuleNotFoundError)) for e in chain):
+        category = "runtime_dependency"
+    elif any(isinstance(e, (ssl.SSLError, ssl.CertificateError)) for e in chain):
+        category = "tls"
+    elif any(isinstance(e, socket.gaierror) for e in chain):
+        category = "dns"
+    elif any(isinstance(e, httpx.ProxyError) for e in chain):
+        category = "proxy"
+    elif any(isinstance(e, (httpx.TimeoutException, TimeoutError)) or type(e).__name__ == "APITimeoutError" for e in chain):
+        category = "timeout"
+    else:
+        status = next((getattr(e, "status_code", None) for e in chain if getattr(e, "status_code", None)), None)
+        category = ({401: "authentication", 403: "authentication", 402: "quota", 429: "rate_limit"}.get(status)
+                    or ("unsupported" if status in (400, 404, 422) else "service" if status else "connection"))
+    # Only names of exception classes, not attributes, messages, URLs or bodies.
+    return category, [type(e).__name__ for e in chain]
+
+
+MESSAGES = {
+    "runtime_dependency": "程序缺少网络运行依赖，请保留诊断摘要并更新本机测试程序。",
+    "tls": "TLS证书校验失败。请检查系统时间、代理证书或安全软件；不要关闭证书校验。",
+    "dns": "无法解析服务域名，请检查网络、DNS和服务地址。",
+    "proxy": "无法连接代理服务，请检查代理是否运行，或在连接高级设置明确选择直连。",
+    "timeout": "模型服务响应超时，请检查网络或稍后重试。",
+    "connection": "无法连接模型服务，请检查网络、服务地址和所选代理路由。",
+}

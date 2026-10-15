@@ -31,5 +31,5 @@ jobs:
       - run: python scripts/verify_installer.py
       - uses: actions/upload-artifact@v4
         with:
-          name: LearningCompass-2026.10.4-windows-x64
+          name: LearningCompass-2026.10.5-windows-x64
           path: release/*

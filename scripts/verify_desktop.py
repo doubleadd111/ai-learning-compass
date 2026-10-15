@@ -20,6 +20,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--directory", type=Path, default=ROOT / "dist" / "LearningCompass")
     parser.add_argument("--report", type=Path, default=ROOT / "release" / "verification.json")
+    parser.add_argument("--native-guide", action="store_true", help="在隔离数据中检查Windows指南窗口标志与恢复")
     args = parser.parse_args()
     executable = args.directory.resolve() / "LearningCompass.exe"
     bundled_guide = (executable.parent / "_internal" / "docs" / "desktop-guide.md").read_text(encoding="utf-8")
@@ -60,6 +61,12 @@ def main():
         report = dict(version=first["version"], frozen_start=True, external_python_removed=True,
                       restart_preserved=True, single_instance=True, credential_store=first.get("credential_store"),
                       offline_guide_packaged=True, clean_windows_vm=False)
+        if args.native_guide:
+            native = Path(directory) / "native"
+            native_environment = dict(environment, QT_QPA_PLATFORM="windows")
+            subprocess.run([str(executable), "--smoke-test", "--data-dir", str(native), "--guide-window-check"],
+                           env=native_environment, cwd=directory, timeout=120, check=True)
+            report["native_guide_window"] = json.loads((native / "smoke-result.json").read_text(encoding="utf-8"))["native_guide_window"]
     output = args.report
     output.parent.mkdir(exist_ok=True)
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")

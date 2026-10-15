@@ -22,9 +22,25 @@ def main():
     parser.add_argument("--minimized", action="store_true")
     parser.add_argument("--smoke-test", action="store_true", help="在指定临时目录中执行无 API 启动检查")
     parser.add_argument("--screenshot", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--network-self-test", help=argparse.SUPPRESS)
+    parser.add_argument("--anonymous-network-check", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--diagnostic-route", choices=["system", "direct"], default="system", help=argparse.SUPPRESS)
+    parser.add_argument("--guide-window-check", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.anonymous_network_check:
+        if args.data_dir is None:
+            parser.error("匿名网络检查必须指定隔离目录")
+        from desktop.network_check import run_anonymous_check
+        return run_anonymous_check(args.data_dir, args.diagnostic_route)
+    if args.network_self_test:
+        if args.data_dir is None:
+            parser.error("网络自检必须指定隔离数据目录")
+        from desktop.network_check import run_network_check
+        return run_network_check(args.network_self_test, args.data_dir)
     if args.smoke_test and args.data_dir is None:
         parser.error("--smoke-test 必须指定独立的 --data-dir")
+    if args.guide_window_check and not args.smoke_test:
+        parser.error("指南窗口自检必须在隔离smoke-test中运行")
     app = QApplication(sys.argv[:1])
     app.setApplicationName("LearningCompass")
     app.setApplicationDisplayName("学习罗盘")
@@ -77,6 +93,26 @@ def main():
                     window.grab().save(str(args.screenshot))
                 report = dict(success=True, version=VERSION, pages=window.stack.count(),
                               plans=len(store.list_plans()), tasks=len(store.tasks()), executable=sys.executable)
+                if args.guide_window_check:
+                    from desktop.guide import open_guide
+                    guide = open_guide(window, "modify")
+                    app.processEvents()
+                    guide.showMinimized()
+                    app.processEvents()
+                    same = open_guide(window)
+                    app.processEvents()
+                    assert same is guide and not guide.isMinimized() and guide.parentWidget() is None
+                    import ctypes
+                    user32 = ctypes.windll.user32
+                    from ctypes import wintypes
+                    user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+                    user32.GetWindow.restype = wintypes.HWND
+                    user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+                    user32.GetWindowLongW.restype = ctypes.c_long
+                    hwnd = int(guide.winId())
+                    assert hwnd != int(window.winId()) and not user32.GetWindow(hwnd, 4)
+                    assert not (user32.GetWindowLongW(hwnd, -20) & 0x80)  # Not WS_EX_TOOLWINDOW.
+                    report["native_guide_window"] = dict(ownerless=True, separate_hwnd=True, taskbar_eligible=True, restored=True)
                 from desktop.credentials import CredentialStore
                 from desktop.models import new_id
                 temporary_credential = "smoke-" + new_id()

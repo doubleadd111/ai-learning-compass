@@ -26,6 +26,7 @@ class ModelConnection(BaseModel):
     api_type: Literal["responses", "chat"] = "chat"
     output_format: Literal["json_schema", "json_object"] = "json_object"
     max_tokens_field: Literal["max_tokens", "max_completion_tokens"] = "max_tokens"
+    network_mode: Literal["system", "direct"] = "system"
 
     @field_validator("base_url")
     @classmethod
