@@ -11,11 +11,12 @@ class Signals(QObject):
 
 
 class Worker(QRunnable):
-    def __init__(self, function):
+    def __init__(self, function, cleanup=None):
         super().__init__()
         self.function = function
         self.signals = Signals()
         self.cancelled = threading.Event()
+        self.cleanup = cleanup
 
     def run(self):
         try:
@@ -31,4 +32,9 @@ class Worker(QRunnable):
             if not self.cancelled.is_set():
                 self.signals.failed.emit("操作未完成，请检查数据与模型设置后重试。")
         finally:
+            if self.cleanup:
+                try:
+                    self.cleanup()
+                except Exception:
+                    pass
             self.signals.finished.emit()

@@ -19,6 +19,7 @@ from desktop.dialogs import ConnectionDialog, PlanDialog, PreviewDialog, TaskDia
 from desktop.focus import FocusTimer
 from desktop.gateway import GatewayError, ModelGateway
 from desktop.models import DesktopProfile
+from desktop.network import TEST_TIMEOUT, MODELS_TIMEOUT, GENERATE_TIMEOUT
 from desktop.review import prepare_review
 from desktop.system import set_autostart
 from desktop.theme import apply_theme, compass_icon
@@ -87,6 +88,10 @@ class MainWindow(QMainWindow):
         self.focus = FocusTimer(store)
         self.worker = None
         self.active_gateway = None
+        self.request_timer = QTimer(self)
+        self.request_timer.setSingleShot(True)
+        self.request_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self.request_timer.timeout.connect(self.request_timed_out)
         self.selected_plan_id = None
         self.exiting = False
         self.enable_tray = enable_tray
@@ -486,29 +491,48 @@ class MainWindow(QMainWindow):
         config = self.connection(connection_id)
         return ModelGateway(config, self.credentials.get(config.id))
 
-    def start_work(self, text, function, done, gateway=None):
+    def start_work(self, text, function, done, gateway=None, *, timeout_seconds=GENERATE_TIMEOUT):
         if self.worker:
             QMessageBox.information(self, "请求正在进行", "请等待当前模型请求结束，或先取消它。")
             return
-        self.worker = Worker(function)
+        worker = Worker(function, gateway.close if gateway else None)
+        self.worker = worker
         self.active_gateway = gateway
-        self.worker.signals.done.connect(lambda result: self.safe(lambda: done(result)))
-        self.worker.signals.failed.connect(lambda message: QMessageBox.warning(self, "模型操作未完成", message))
-        self.worker.signals.finished.connect(self.work_finished)
+        # 身份检查阻止已取消任务的排队信号污染新任务，即使信号已进入 Qt 事件队列。
+        worker.signals.done.connect(lambda result: self.safe(lambda: done(result)) if self.worker is worker and not worker.cancelled.is_set() else None)
+        worker.signals.failed.connect(lambda message: self.request_failed(worker, message))
+        worker.signals.finished.connect(lambda: self.work_finished(worker))
+        self.request_timeout_seconds = timeout_seconds
+        self.request_timer.start(max(1, int(timeout_seconds * 1000)))
+        self.notice.clear()
         self.busy.setText(text)
         self.cancel_button.show()
-        QThreadPool.globalInstance().start(self.worker)
+        QThreadPool.globalInstance().start(worker)
 
     def cancel_request(self):
         if self.worker:
             self.worker.cancelled.set()
-            self.busy.setText("已取消；未完成结果不会保存，正在结束连接。")
             if self.active_gateway:
-                self.active_gateway.client.close()
+                self.active_gateway.cancel()
+            self.work_finished(self.worker)
+            self.notice.setText("已取消，可以发起新请求。未完成结果不会保存；服务端已收到的请求仍可能计费。")
 
-    def work_finished(self):
-        if self.active_gateway:
-            self.active_gateway.client.close()
+    def request_timed_out(self):
+        if self.worker:
+            seconds = self.request_timeout_seconds
+            self.cancel_request()
+            self.notice.setText(f"请求已超过 {seconds:g} 秒，已停止等待。请检查网络与代理或稍后重试；旧结果不会保存。")
+
+    def request_failed(self, worker, message):
+        if self.worker is worker and not worker.cancelled.is_set():
+            self.work_finished(worker)
+            self.notice.setText(message)
+            QMessageBox.warning(self, "模型操作未完成", message)
+
+    def work_finished(self, worker=None):
+        if worker is not None and self.worker is not worker:
+            return
+        self.request_timer.stop()
         self.worker = None
         self.active_gateway = None
         self.busy.clear()
@@ -713,8 +737,8 @@ class MainWindow(QMainWindow):
             return
         def action():
             gateway = self.gateway(config.id)
-            self.start_work("正在测试 JSON 连接…", lambda cancel: gateway.test(),
-                            lambda result: self.notice.setText(f"连接测试通过，模型能返回有效 JSON。输入／输出 token：{result[0] if result[0] is not None else '未知'}／{result[1] if result[1] is not None else '未知'}。"), gateway)
+            self.start_work(f"正在测试 JSON 连接（最多 {TEST_TIMEOUT} 秒）…", lambda cancel: gateway.test(cancelled=cancel),
+                            lambda result: self.notice.setText(f"连接测试通过，模型能返回有效 JSON。输入／输出 token：{result[0] if result[0] is not None else '未知'}／{result[1] if result[1] is not None else '未知'}。"), gateway, timeout_seconds=TEST_TIMEOUT)
         self.safe(action)
 
     def fetch_models(self):
@@ -731,7 +755,7 @@ class MainWindow(QMainWindow):
                     updated = config.model_copy(update={"model": name.strip()})
                     self.store.save_connection(updated)
                     self.refresh()
-            self.start_work("正在获取服务商模型列表…", lambda cancel: gateway.list_models(), done, gateway)
+            self.start_work("正在获取服务商模型列表…", lambda cancel: gateway.list_models(cancelled=cancel), done, gateway, timeout_seconds=MODELS_TIMEOUT)
         self.safe(action)
 
     def refresh_focus_tasks(self):

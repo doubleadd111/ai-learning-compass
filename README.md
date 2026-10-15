@@ -1,5 +1,7 @@
 # 学习罗盘 2026.10
 
+开发中的补丁版本为 **2026.10.1**，修复连接测试超时和取消问题，提供本机测试构建，尚未正式打包发布。[更新日志](CHANGELOG.md) 保留每个版本的变化；下方下载仍为已发布的 2026.10.0。
+
 中文 Windows 桌面学习计划软件：使用自己的 DeepSeek／OpenAI 兼容模型生成通用学习计划，记录进度、每周复盘，提供本机长期保存、备份、托盘提醒与专注计时。
 
 **桌面版下载：**[2026.10.0 公开试用版](https://github.com/doubleadd111/ai-learning-compass/releases/tag/2026.10.0) · [桌面版使用指南](docs/desktop-guide.md) · [验收记录](docs/desktop-verification.md)。安装后无需 Python 或 PowerShell。源码入口为 `run_desktop.py`，依赖使用 `requirements-desktop.txt`。

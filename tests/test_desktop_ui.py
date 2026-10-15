@@ -61,3 +61,54 @@ def test_background_result_returns_to_ui_and_cancel_discards_late_result(qtbot, 
     assert len(results) == 1
     window.exiting = True
     window.close()
+
+
+def test_cancel_immediately_allows_new_request_and_old_finish_cannot_clear_it(qtbot, tmp_path):
+    import threading
+    from time import monotonic
+    old_gate, new_gate = threading.Event(), threading.Event()
+    window = MainWindow(Store(tmp_path), credentials=CredentialStore(object()), enable_tray=False)
+    qtbot.addWidget(window)
+    results = []
+    window.start_work("旧请求", lambda cancel: (old_gate.wait(2), "旧结果")[1], results.append)
+    old_worker = window.worker
+    started = monotonic()
+    window.cancel_request()
+    assert window.worker is None and monotonic() - started < .1
+    window.start_work("新请求", lambda cancel: (new_gate.wait(2), "新结果")[1], results.append)
+    new_worker = window.worker
+    old_gate.set()
+    qtbot.wait(80)
+    assert window.worker is new_worker and not results
+    # 模拟取消前已排入主线程队列的迟到信号。
+    old_worker.signals.done.emit("迟到结果")
+    old_worker.signals.finished.emit()
+    assert window.worker is new_worker and not results
+    new_gate.set()
+    qtbot.waitUntil(lambda: window.worker is None)
+    assert results == ["新结果"]
+    window.exiting = True
+    window.close()
+
+
+def test_ui_deadline_and_failure_restore_controls(qtbot, tmp_path, monkeypatch):
+    import threading
+    from PySide6.QtWidgets import QMessageBox
+    gate = threading.Event()
+    window = MainWindow(Store(tmp_path), credentials=CredentialStore(object()), enable_tray=False)
+    qtbot.addWidget(window)
+    results = []
+    window.start_work("连接测试", lambda cancel: (gate.wait(1), "旧结果")[1], results.append, timeout_seconds=.05)
+    qtbot.waitUntil(lambda: window.worker is None)
+    assert "停止等待" in window.notice.text() and not window.cancel_button.isVisible()
+    gate.set()
+    def fail(cancel):
+        raise ValueError("测试失败")
+    messages = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *_args: messages.append(window.worker))
+    window.start_work("失败测试", fail, results.append)
+    qtbot.waitUntil(lambda: bool(messages))
+    assert messages == [None] and window.worker is None
+    assert "测试失败" in window.notice.text() and not results
+    window.exiting = True
+    window.close()

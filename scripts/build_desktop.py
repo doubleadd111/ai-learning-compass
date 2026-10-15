@@ -33,11 +33,12 @@ def prepare():
     build.mkdir(exist_ok=True)
     if not compass_icon(256).pixmap(256, 256).save(str(build / "compass.ico"), "ICO"):
         raise RuntimeError("无法生成软件图标")
-    (build / "version-info.txt").write_text("""VSVersionInfo(
-      ffi=FixedFileInfo(filevers=(2026,10,0,0), prodvers=(2026,10,0,0), mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0,0)),
+    version_tuple = tuple(int(part) for part in VERSION.split(".")) + (0,)
+    (build / "version-info.txt").write_text(f"""VSVersionInfo(
+      ffi=FixedFileInfo(filevers={version_tuple}, prodvers={version_tuple}, mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0,0)),
       kids=[StringFileInfo([StringTable('080404b0', [StringStruct('CompanyName','doubleadd111'),
-        StringStruct('FileDescription','学习罗盘'), StringStruct('FileVersion','2026.10.0'),
-        StringStruct('ProductName','学习罗盘'),StringStruct('ProductVersion','2026.10.0')])]),
+        StringStruct('FileDescription','学习罗盘'), StringStruct('FileVersion','{VERSION}'),
+        StringStruct('ProductName','学习罗盘'),StringStruct('ProductVersion','{VERSION}')])]),
         VarFileInfo([VarStruct('Translation',[2052,1200])])])""", encoding="utf-8")
     licenses = build / "licenses"
     licenses.mkdir(exist_ok=True)
@@ -61,12 +62,23 @@ def prepare():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--iscc", type=Path, default=ROOT / ".tools" / "InnoSetup" / "ISCC.exe")
+    parser.add_argument("--local-test", action="store_true", help="只构建本机测试程序，不生成正式安装包或便携 ZIP")
     args = parser.parse_args()
     source_hash = source_digest()
     installed = prepare()
     subprocess.run([sys.executable, "-m", "PyInstaller", "--noconfirm", str(ROOT / "packaging" / "desktop.spec")], cwd=ROOT, check=True)
     shutil.copy2(ROOT / "docs" / "desktop-guide.md", ROOT / "dist" / "LearningCompass" / "使用说明.md")
     shutil.copy2(ROOT / "THIRD_PARTY_NOTICES.md", ROOT / "dist" / "LearningCompass" / "THIRD_PARTY_NOTICES.md")
+    shutil.copy2(ROOT / "CHANGELOG.md", ROOT / "dist" / "LearningCompass" / "更新日志.md")
+    if args.local_test:
+        if source_digest() != source_hash:
+            raise RuntimeError("构建期间源码发生变化，请重新构建本机测试程序。")
+        executable = ROOT / "dist" / "LearningCompass" / "LearningCompass.exe"
+        manifest = {"version": VERSION, "kind": "local-test", "source_sha256": source_hash,
+                    "exe_sha256": hashlib.sha256(executable.read_bytes()).hexdigest(), "dependencies": installed}
+        (ROOT / "build" / "local-test-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"Local test build complete (no installer or portable ZIP): {executable.parent}")
+        return
     release = ROOT / "release"
     release.mkdir(exist_ok=True)
     portable = release / f"LearningCompass-{VERSION}-windows-x64-portable.zip"

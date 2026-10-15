@@ -1,0 +1,90 @@
+"""只更新当前用户的已安装程序；先备份，不卸载、不读取系统凭据。"""
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import sqlite3
+import subprocess
+import sys
+from datetime import datetime
+import winreg
+from contextlib import closing
+import zipfile
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from desktop import VERSION
+from scripts.build_desktop import source_digest
+
+
+def database_fingerprint(path):
+    if not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as connection:
+        tables = connection.execute("SELECT name,sql FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
+        for name, sql in tables:
+            digest.update(repr((name, sql)).encode("utf-8"))
+            quoted = name.replace('"', '""')
+            for row in connection.execute(f'SELECT * FROM "{quoted}" ORDER BY rowid'):
+                digest.update(repr(row).encode("utf-8"))
+    return digest.hexdigest()
+
+
+def main():
+    target = (Path(os.environ["LOCALAPPDATA"]) / "Programs" / "LearningCompass").resolve()
+    key = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{AFC764B4-94E8-4F93-A358-62B12B2794C2}_is1"
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as registry:
+            registered = Path(winreg.QueryValueEx(registry, "InstallLocation")[0]).resolve()
+    except FileNotFoundError:
+        # 缺少卸载登记时，只允许已知默认目录内与原发布包逐字节相同的旧程序。
+        legacy = ROOT / "release" / "LearningCompass-2026.10.0-windows-x64-portable.zip"
+        with zipfile.ZipFile(legacy) as archive:
+            expected = hashlib.sha256(archive.read("LearningCompass/LearningCompass.exe")).hexdigest()
+        actual = hashlib.sha256((target / "LearningCompass.exe").read_bytes()).hexdigest()
+        if actual != expected:
+            raise RuntimeError("缺少安装登记且程序与原发布包不符，停止自动覆盖。") from None
+        registered = target
+    if registered != target or not (target / "LearningCompass.exe").is_file():
+        raise RuntimeError("安装位置与预期不一致，停止自动覆盖。")
+    running = subprocess.run(["pwsh", "-NoProfile", "-Command",
+                              "Get-Process LearningCompass -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id"],
+                             capture_output=True, text=True, check=False)
+    if running.stdout.strip():
+        raise RuntimeError("请先从托盘完全退出学习罗盘，再更新；不强制终止以免丢失记录。")
+    source = (ROOT / "dist" / "LearningCompass").resolve()
+    manifest = json.loads((ROOT / "build" / "local-test-manifest.json").read_text(encoding="utf-8"))
+    if manifest["version"] != VERSION or manifest["source_sha256"] != source_digest():
+        raise RuntimeError("测试构建与当前源码不一致，停止更新。")
+    if hashlib.sha256((source / "LearningCompass.exe").read_bytes()).hexdigest() != manifest["exe_sha256"]:
+        raise RuntimeError("测试程序校验不通过，停止更新。")
+    database = (Path(os.environ["LOCALAPPDATA"]) / "LearningCompass" / "learning-compass.sqlite3").resolve()
+    before = database_fingerprint(database)
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    recovery = ROOT / ".learning_compass" / "qa" / f"update-{VERSION}-{timestamp}"
+    recovery.mkdir(parents=True)
+    shutil.copytree(target, recovery / "previous-program")
+    if before is not None:
+        backup = database.parent / "backups" / f"pre-update-{VERSION}-{timestamp}.sqlite3"
+        backup.parent.mkdir(exist_ok=True)
+        with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as original:
+            with closing(sqlite3.connect(backup)) as copy:
+                original.backup(copy)
+        if database_fingerprint(backup) != before:
+            raise RuntimeError("数据库备份校验失败，停止更新。")
+    # 仅复制到核对过的确切安装目录，不删除学习目录，不改变凭据或卸载登记。
+    shutil.copytree(source, target, dirs_exist_ok=True)
+    if hashlib.sha256((target / "LearningCompass.exe").read_bytes()).hexdigest() != manifest["exe_sha256"]:
+        raise RuntimeError("覆盖后校验失败，旧程序保存在恢复目录中。")
+    if database_fingerprint(database) != before:
+        raise RuntimeError("学习数据在更新期间发生变化，请先检查记录，不自动覆盖用户数据。")
+    report = dict(version=VERSION, kind="local-test", target=str(target), recovery=str(recovery),
+                  data_unchanged=True, credentials_untouched=True, updated_at=datetime.now().isoformat())
+    (recovery / "update-report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(json.dumps(report, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()

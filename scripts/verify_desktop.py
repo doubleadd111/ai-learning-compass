@@ -17,6 +17,7 @@ from desktop.store import Store
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--directory", type=Path, default=ROOT / "dist" / "LearningCompass")
+    parser.add_argument("--report", type=Path, default=ROOT / "release" / "verification.json")
     args = parser.parse_args()
     executable = args.directory.resolve() / "LearningCompass.exe"
     environment = dict(os.environ)
@@ -54,7 +55,7 @@ def main():
         report = dict(version=first["version"], frozen_start=True, external_python_removed=True,
                       restart_preserved=True, single_instance=True, credential_store=first.get("credential_store"),
                       clean_windows_vm=False)
-    output = ROOT / "release" / "verification.json"
+    output = args.report
     output.parent.mkdir(exist_ok=True)
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False))

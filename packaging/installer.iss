@@ -1,11 +1,11 @@
-#define AppVersion "2026.10.0"
+#define AppVersion "2026.10.1"
 #define AppName "学习罗盘"
 
 [Setup]
 AppId={{AFC764B4-94E8-4F93-A358-62B12B2794C2}
 AppName={#AppName}
 AppVersion={#AppVersion}
-AppVerName={#AppName} 2026.10
+AppVerName={#AppName} {#AppVersion}
 AppPublisher=doubleadd111
 AppPublisherURL=https://github.com/doubleadd111/ai-learning-compass
 DefaultDirName={localappdata}\Programs\LearningCompass
