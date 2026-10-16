@@ -26,6 +26,7 @@ def main():
     parser.add_argument("--anonymous-network-check", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--diagnostic-route", choices=["system", "direct"], default="system", help=argparse.SUPPRESS)
     parser.add_argument("--guide-window-check", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--input-scope-check", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.anonymous_network_check:
         if args.data_dir is None:
@@ -41,6 +42,8 @@ def main():
         parser.error("--smoke-test 必须指定独立的 --data-dir")
     if args.guide_window_check and not args.smoke_test:
         parser.error("指南窗口自检必须在隔离smoke-test中运行")
+    if args.input_scope_check and not args.smoke_test:
+        parser.error("输入范围自检必须在隔离smoke-test中运行")
     app = QApplication(sys.argv[:1])
     app.setApplicationName("LearningCompass")
     app.setApplicationDisplayName("学习罗盘")
@@ -93,6 +96,9 @@ def main():
                     window.grab().save(str(args.screenshot))
                 report = dict(success=True, version=VERSION, pages=window.stack.count(),
                               plans=len(store.list_plans()), tasks=len(store.tasks()), executable=sys.executable)
+                if args.input_scope_check:
+                    from desktop.input_check import check_input_controls
+                    report['input_scope'] = check_input_controls(window)
                 if args.guide_window_check:
                     from desktop.guide import open_guide
                     guide = open_guide(window, "modify")

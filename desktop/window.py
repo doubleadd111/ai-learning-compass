@@ -10,14 +10,14 @@ from PySide6.QtCore import Qt, QThreadPool, QTimer, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QFileDialog, QFrame,
     QHBoxLayout, QHeaderView, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMainWindow,
-    QMenu, QMessageBox, QPushButton, QProgressBar, QScrollArea, QSpinBox, QStackedWidget,
+    QMenu, QMessageBox, QPushButton, QProgressBar, QScrollArea, QStackedWidget,
     QSystemTrayIcon, QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget, QLineEdit,
     QSizePolicy)
 
 from demo_sample import sample_learning_plan
 from desktop import DISPLAY_VERSION
 from desktop.credentials import CredentialStore
-from desktop.dialogs import ConnectionDialog, PlanDialog, PreviewDialog, TaskDialog, spin
+from desktop.dialogs import ConnectionDialog, PlanDialog, PreviewDialog, TaskDialog, spin, choose_model
 from desktop.focus import FocusTimer
 from desktop.gateway import GatewayError, ModelGateway
 from desktop.models import DesktopProfile
@@ -927,7 +927,7 @@ class MainWindow(QMainWindow):
             def done(models):
                 if not models:
                     raise ValueError("服务未提供模型列表，请编辑配置并手动填写模型 ID。")
-                name, ok = QInputDialog.getItem(self, "选择模型", "模型 ID（也可手动输入）", models, 0, True)
+                name, ok = choose_model(models, self)
                 if ok and name.strip():
                     updated = config.model_copy(update={"model": name.strip()})
                     self.store.save_connection(updated)

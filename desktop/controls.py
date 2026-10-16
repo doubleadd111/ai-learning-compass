@@ -3,7 +3,21 @@ from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (QApplication, QComboBox, QFrame, QListView,
                               QProxyStyle, QStyle, QStyledItemDelegate,
-                              QSpinBox, QTimeEdit, QStyleOptionSpinBox)
+                              QDateEdit, QSpinBox, QTimeEdit, QStyleOptionComboBox, QStyleOptionSpinBox)
+
+
+def dropdown_arrow_rect(widget):
+    """Resolve the painted dropdown subcontrol, including calendar date edits."""
+    option = QStyleOptionComboBox()
+    if isinstance(widget, QComboBox):
+        widget.initStyleOption(option)
+    else:
+        option.initFrom(widget)
+        option.rect = widget.rect()
+        option.editable = True
+        option.frame = True
+    return widget.style().subControlRect(QStyle.ComplexControl.CC_ComboBox, option,
+                                        QStyle.SubControl.SC_ComboBoxArrow, widget)
 
 
 class ArrowWheelOnly:
@@ -25,6 +39,16 @@ class ArrowWheelSpinBox(ArrowWheelOnly, QSpinBox):
 
 class ArrowWheelTimeEdit(ArrowWheelOnly, QTimeEdit):
     pass
+
+
+class ArrowWheelDateEdit(ArrowWheelOnly, QDateEdit):
+    def wheelEvent(self, event):
+        if not self.calendarPopup():
+            return super().wheelEvent(event)
+        if dropdown_arrow_rect(self).contains(event.position().toPoint()):
+            QDateEdit.wheelEvent(self, event)
+        else:
+            event.ignore()
 
 
 def dropdown_colors():
@@ -98,6 +122,15 @@ class DropdownDelegate(QStyledItemDelegate):
 
 
 class SoftComboBox(QComboBox):
+    def wheelEvent(self, event):
+        # Popup list browsing keeps its own native scrolling and confirmation.
+        if self.view().window().isVisible():
+            event.ignore()
+        elif dropdown_arrow_rect(self).contains(event.position().toPoint()):
+            super().wheelEvent(event)
+        else:
+            event.ignore()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         view = QListView()

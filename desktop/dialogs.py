@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 from desktop.controls import SoftComboBox as QComboBox
-from desktop.controls import ArrowWheelSpinBox as QSpinBox, ArrowWheelTimeEdit as QTimeEdit
+from desktop.controls import (ArrowWheelSpinBox as QSpinBox, ArrowWheelTimeEdit as QTimeEdit,
+                              ArrowWheelDateEdit as QDateEdit)
 from desktop.calendar import configure_calendar
 
 from datetime import date
 from html import escape
 
 from PySide6.QtCore import QDate, QTime, Qt
-from PySide6.QtWidgets import (QCheckBox, QDateEdit, QDialog, QDialogButtonBox,
+from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox,
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
     QTextBrowser, QVBoxLayout, QWidget)
 
@@ -124,6 +125,29 @@ class PlanDialog(QDialog):
             QMessageBox.warning(self, "请补充资料", "目标请填写 4–240 个字，至少选择一个学习日，偏好不超过 500 字。")
             return
         super().accept()
+
+
+class ModelSelectionDialog(QDialog):
+    """Use the same guarded, editable dropdown as every other model field."""
+    def __init__(self, models, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("选择模型")
+        self.resize(480, 160)
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("模型 ID（也可手动输入）"))
+        self.model = QComboBox()
+        self.model.setEditable(True)
+        self.model.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.model.setMinimumContentsLength(20)
+        self.model.addItems(models)
+        layout.addWidget(self.model)
+        buttons(self, layout, "使用此模型")
+
+
+def choose_model(models, parent=None):
+    dialog = ModelSelectionDialog(models, parent)
+    accepted = dialog.exec() == QDialog.DialogCode.Accepted
+    return dialog.model.currentText(), accepted
 
 
 class ConnectionDialog(QDialog):
