@@ -12,6 +12,7 @@ from curriculum import curriculum_prompt
 from models import StudyPlan, validate_plan_for_profile
 from planner import STUDY_PLAN_SCHEMA, _make_strict_schema
 from desktop.models import DesktopProfile, ModelConnection
+from desktop.output_validation import constraint_hint, validation_issues
 from desktop.diagnostics import ConnectionDiagnostic, MESSAGES, classify, api_error_details
 from desktop.network import (Cancelled, CancellableTransport, RequestControl,
                              TEST_TIMEOUT, MODELS_TIMEOUT, GENERATE_TIMEOUT)
@@ -208,9 +209,12 @@ class ModelGateway:
         metrics = {"attempts": 0, "input_tokens": None, "output_tokens": None, "success": False}
         provenance = {"connection_name": self.connection.name, "model": self.connection.model,
                       "stage": name, "metrics": metrics}
-        schema = _make_strict_schema(result_type.model_json_schema())
+        raw_schema = result_type.model_json_schema()
+        schema = _make_strict_schema(raw_schema)
+        prompt += constraint_hint(raw_schema)
         correction = ""
         constraint_message = ""
+        issues = []
         try:
             for _ in range(2):
                 self.control.check()
@@ -235,20 +239,27 @@ class ModelGateway:
                     if validate:
                         validate(result)
                 except ValueError as error:
+                    issues = validation_issues(error, text)
                     if self.last_diagnostic:
                         self.last_diagnostic.category = "invalid_output"
+                        self.last_diagnostic.validation_issues = issues
                     # Domain validators contain safe, actionable conflict messages;
                     # Pydantic errors may echo raw model output, so keep those private.
                     from pydantic import ValidationError
+                    constraint_message = ""
                     if not isinstance(error, ValidationError):
                         constraint_message = str(error)[:300]
-                    correction = "\n上次结果未通过本地校验，请重新输出完整JSON并修正：" + str(error)[:2000]
+                    correction = "\n上次结果未通过本地校验，请重新输出完整JSON并修正：" + "；".join(issue.summary() for issue in issues)
+                    if constraint_message:
+                        correction += "；" + constraint_message
                 else:
                     metrics["success"] = True
                     return result, provenance
             metrics["error_category"] = "invalid_output"
             detail = f"约束冲突：{constraint_message}。" if constraint_message else ""
-            raise GatewayError("结果连续两次未通过校验。" + detail + "请调整需求或更换模型。原计划与草稿仍保留。", provenance)
+            if not constraint_message and issues:
+                detail = "校验原因：" + "；".join(issue.summary() for issue in issues) + "。"
+            raise GatewayError("结果连续两次未通过校验。" + detail + "请保留连接诊断；不必为格式错误修改学习目标。原计划与草稿仍保留。", provenance)
         finally:
             metrics["latency_ms"] = round((perf_counter() - started) * 1000)
 
