@@ -11,12 +11,14 @@ LIGHT = dict(bg="#F6F7F9", card="#FFFFFF", ink="#202938", muted="#68758A",
              line="#E5E9F0", accent="#356CF6", sidebar="#F0F3F8", hover="#EAF0FF",
              selected="#E5EDFF", pressed="#D4E1FF", primary_hover="#255AE0",
              primary_pressed="#1B48BD", disabled="#EFF1F5", danger="#B73E4C",
-             danger_hover="#FFF0F1", track="#E9EDF3", good="#238371")
+             danger_hover="#FFF0F1", track="#E9EDF3", good="#238371",
+             progress_fill="#5B7FE8", progress_track="#E9EEF9")
 DARK = dict(bg="#15191F", card="#1D232C", ink="#EBEFF6", muted="#A2AFC1",
             line="#343E4D", accent="#83A9FF", sidebar="#191F28", hover="#293750",
             selected="#283B5C", pressed="#364C71", primary_hover="#2E60DC",
             primary_pressed="#2859CD", disabled="#242B35", danger="#FFA1AA",
-            danger_hover="#3B2832", track="#303A49", good="#68C9B1")
+            danger_hover="#3B2832", track="#303A49", good="#68C9B1",
+            progress_fill="#8DAAF2", progress_track="#2A354B")
 
 
 def compass_icon(size=128):
@@ -202,8 +204,8 @@ def apply_theme(app, choice="system"):
         QScrollBar::handle:hover {{ background:{muted}; }}
         QScrollBar::add-line, QScrollBar::sub-line {{ width:0; height:0; }}
         QScrollBar::add-page, QScrollBar::sub-page {{ background:transparent; }}
-        QProgressBar {{ border:0; background:{colors['track']}; height:6px; max-height:6px; border-radius:3px; }}
-        QProgressBar::chunk {{ background:{colors['good']}; border-radius:3px; }}
+        QProgressBar {{ border:0; background:{colors['progress_track']}; height:6px; max-height:6px; border-radius:3px; }}
+        QProgressBar::chunk {{ background:{colors['progress_fill']}; border-radius:3px; }}
         QGroupBox {{ background:{card}; border:1px solid {line}; border-radius:12px; margin-top:16px; padding:18px; }}
         QGroupBox::title {{ subcontrol-origin:margin; padding:0 8px; }}
         QMenu {{ background:{card}; border:1px solid {line}; border-radius:8px; padding:6px; }}
