@@ -57,6 +57,7 @@ class PlanningWindow(QDialog):
         self.store = owner.store
         self.draft = draft.model_copy(deep=True)
         self.owned_worker = None
+        self.stage_notice = ""
         self.closed = False
         self.setWindowTitle("需求与计划 · 学习罗盘")
         self.resize(860, 740)
@@ -208,11 +209,11 @@ class PlanningWindow(QDialog):
         # Freeze input during a request. Its immutable snapshot cannot be silently
         # contradicted by an autosave while the background model is responding.
         self.pages.setEnabled(not working)
-        if working:
+        if working and not self.stage_notice:
             self.status.setText(self.owner.busy.text() + "  " + self.owner.request_countdown.text())
-        elif self.owned_worker:
+        elif not working and self.owned_worker:
             self.owned_worker = None
-            self.status.setText(self.owner.notice.text() or "请求结束，草稿仍保留。")
+            self.status.setText(self.stage_notice or self.owner.notice.text() or "请求结束，草稿仍保留。")
 
     def run_stage(self, stage, function, done):
         if self.owner.worker:
@@ -229,6 +230,7 @@ class PlanningWindow(QDialog):
             raise ValueError("该连接已删除或设置已变化。请明确“换用顶部模型”后继续，避免把新密钥发送到旧地址。")
         gateway = ModelGateway(snapshot.connection, self.owner.credentials.get(snapshot.connection.id))
         revision = self.draft.revision
+        self.stage_notice = ""
         def work(cancel):
             try:
                 result, provenance = function(gateway, snapshot, cancel)
@@ -246,7 +248,10 @@ class PlanningWindow(QDialog):
             self.draft.events.append(provenance)
             done(payload)
             self.store.save_draft(self.draft)
-            self.status.setText("结果已保存为草稿；正式计划尚未改变。")
+            self.stage_notice = "结果已保存为草稿；正式计划尚未改变。"
+            if provenance.get("metrics", {}).get("summary_excerpted_count"):
+                self.stage_notice += " 概略标题为原文摘录；完整文字已保留在展开内容中。"
+            self.status.setText(self.stage_notice)
             self.render()
         self.owner.start_work(f"正在{stage}…", work, finish, gateway)
         self.owned_worker = self.owner.worker

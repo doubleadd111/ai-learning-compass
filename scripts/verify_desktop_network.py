@@ -62,9 +62,9 @@ def main():
                 text = '{"ok":true}'
             elif operation == "planning_clarification":
                 text = json.dumps(dict(decision="outline", questions=[], outlines=[dict(points=[
-                    dict(id=f"stage-{i}", summary="从基础概念开始，通过短练习巩固关键步骤，并留下可以检查的学习产出。",
+                    dict(id=f"stage-{i}", summary=("学习与实践并检查结果，逐步完成一个可运行的小作品。" * 8)[:length],
                          objective="完成基础学习", content="运行并修改最小练习", deliverable="可检查的练习", rationale="根据可用时间安排")
-                    for i in range(3)], assumptions=["使用已有学习设备"])]), ensure_ascii=False)
+                    for i, length in enumerate((139, 114, 117))], assumptions=["使用已有学习设备"])]), ensure_ascii=False)
             else:
                 text = sample_learning_plan()[1].model_dump_json()
             usage = dict(input_tokens=10, output_tokens=20, total_tokens=30)

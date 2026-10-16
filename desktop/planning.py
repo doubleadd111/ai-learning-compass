@@ -11,6 +11,57 @@ from desktop.models import DesktopProfile, ModelConnection, new_id
 from models import DailyTask, StudyPlan
 
 
+def prepare_outline_excerpt(text: str) -> tuple[str, int]:
+    """Excerpt presentation titles only; preserve full source in existing details.
+
+    This is not a semantic repair. Fail atomically if any source text cannot fit
+    without loss. The caller must still validate the complete result as usual.
+    """
+    try:
+        data = json.loads(text)
+    except (ValueError, TypeError):
+        return text, 0
+    if not isinstance(data, dict) or data.get("decision") != "outline":
+        return text, 0
+    if "outlines" in data and "outline" not in data:
+        outlines = data["outlines"]
+        outline = outlines[0] if isinstance(outlines, list) and len(outlines) == 1 else None
+    elif "outline" in data and "outlines" not in data:
+        outline = data["outline"]
+    else:
+        return text, 0
+    points = outline.get("points") if isinstance(outline, dict) else None
+    if not isinstance(points, list) or not 3 <= len(points) <= 5:
+        return text, 0
+    if any(not isinstance(p, dict) or not isinstance(p.get("summary"), str)
+           or not isinstance(p.get("content"), str) or not 2 <= len(p["content"]) <= 500
+           or len(p["summary"]) < 4 for p in points):
+        return text, 0
+    if all(len(p["summary"]) <= 40 for p in points) and 80 <= sum(len(p["summary"]) for p in points) <= 140:
+        return text, 0
+    summaries = [" ".join(p["summary"].split()) for p in points]
+    capacities = [min(len(summary), 40) for summary in summaries]
+    if min(capacities) < 4 or sum(capacities) < 80:
+        return text, 0
+    budgets = [4] * len(points)
+    target = min(100, sum(capacities))
+    while sum(budgets) < target:
+        for i, capacity in enumerate(capacities):
+            if budgets[i] < capacity and sum(budgets) < target:
+                budgets[i] += 1
+    count = 0
+    for point, summary, budget in zip(points, summaries, budgets):
+        if len(point["summary"]) <= budget:
+            continue
+        content = f"完整概略（标题为原文摘录）：{point['summary']}\n\n原主要内容：{point['content']}"
+        if len(content) > 500:
+            return text, 0
+        point["summary"] = summary[:budget - 1] + "…" if len(summary) > budget else summary
+        point["content"] = content
+        count += 1
+    return (json.dumps(data, ensure_ascii=False), count) if count else (text, 0)
+
+
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

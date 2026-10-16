@@ -88,9 +88,10 @@ def main():
         raise RuntimeError("学习数据在更新期间发生变化，请先检查记录，不自动覆盖用户数据。")
     known_directory = ROOT / ".learning_compass" / "qa" / "known-local-builds"
     known_directory.mkdir(exist_ok=True)
-    shutil.copy2(ROOT / "build" / "local-test-manifest.json", known_directory / f"{VERSION}.json")
+    shutil.copy2(ROOT / "build" / "local-test-manifest.json", known_directory / f"{VERSION}-{manifest['exe_sha256'][:12]}.json")
     report = dict(version=VERSION, kind="local-test", target=str(target), recovery=str(recovery),
-                  data_unchanged=True, credentials_untouched=True, updated_at=datetime.now().isoformat())
+                  data_unchanged=True, credentials_untouched=True, exe_sha256=manifest["exe_sha256"],
+                  source_sha256=manifest["source_sha256"], updated_at=datetime.now().isoformat())
     (recovery / "update-report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False))
 

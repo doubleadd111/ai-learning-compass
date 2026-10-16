@@ -58,6 +58,9 @@ def run_network_check(url, directory):
                                               weekdays=list(range(profile.days_per_week)), quick=True, connection=config)
                         turn, _event = gateway.clarify(draft)
                         assert turn.decision == "outline"
+                        assert _event["metrics"]["summary_excerpted_count"] == 3
+                        assert sum(len(p.summary) for p in turn.outline.points) == 100
+                        assert all("完整概略（标题为原文摘录）" in p.content for p in turn.outline.points)
                     else:
                         gateway.generate(profile)
                     success = True

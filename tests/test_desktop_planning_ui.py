@@ -138,6 +138,23 @@ def test_questions_custom_answers_outline_expand_and_confirmed_save(ui, qtbot):
     assert len(brief["events"]) == 3
 
 
+def test_excerpt_notice_is_visible_without_extra_request(ui, qtbot, monkeypatch):
+    from desktop.planning_ui import ModelGateway
+    owner, config, calls, *_ = ui
+    previous = ModelGateway.provenance
+    def provenance(gateway):
+        result = previous(gateway)
+        result['metrics']['summary_excerpted_count'] = 3
+        return result
+    monkeypatch.setattr(ModelGateway, 'provenance', provenance)
+    flow = open_flow(owner, config)
+    flow.advance()
+    wait_stage(qtbot, owner, flow, 'outline')
+    qtbot.wait(350)  # A later busy timer tick must not erase the completion notice.
+    assert '原文摘录' in flow.status.text() and '展开内容' in flow.status.text()
+    assert len(calls) == 1 and owner.store.list_plans() == []
+
+
 def test_model_snapshot_only_changes_after_explicit_switch(ui, qtbot):
     owner, config, calls, turns, *_ = ui
     flow = open_flow(owner, config, quick=True)

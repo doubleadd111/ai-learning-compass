@@ -384,7 +384,7 @@ class Store:
     def planning_event(self, draft_id, stage, provenance):
         metrics = provenance.get("metrics", {})
         safe = dict(stage=stage, connection_name=provenance.get("connection_name", ""), model=provenance.get("model", ""),
-                    metrics={key: metrics[key] for key in ("attempts", "input_tokens", "output_tokens", "latency_ms", "success", "error_category") if key in metrics})
+                    metrics={key: metrics[key] for key in ("attempts", "input_tokens", "output_tokens", "latency_ms", "success", "error_category", "summary_excerpted_count") if key in metrics})
         with self.write() as c:
             c.execute("INSERT INTO planning_events VALUES (?,?,?,?)", (new_id(), draft_id, json.dumps(safe, ensure_ascii=False), now()))
         return safe
