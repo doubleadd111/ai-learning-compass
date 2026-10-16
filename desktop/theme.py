@@ -108,6 +108,33 @@ def apply_theme(app, choice="system"):
         QToolButton {{ background:{card}; color:{ink}; border:1px solid {line}; border-radius:10px; padding:14px 16px; text-align:left; }}
         QToolButton:hover, QToolButton[hovered="true"], QToolButton:checked {{ background:{hover}; border-color:{accent}; color:{accent}; }}
         QToolButton:pressed {{ background:{pressed}; }} QToolButton:focus {{ border-color:{accent}; }}
+        QFrame#planningSteps {{ background:transparent; border:0; }}
+        QFrame#planningStep {{ background:transparent; border:0; border-radius:9px; }}
+        QFrame#planningStep[stageState="current"] {{ background:{selected}; }}
+        QLabel#stepMarker {{ background:{colors['track']}; color:{muted}; border-radius:11px; font:11px 'Consolas'; }}
+        QLabel#stepTitle {{ color:{muted}; font-size:12px; }}
+        QFrame#planningStep[stageState="current"] QLabel#stepMarker {{ background:#356CF6; color:#FFFFFF; }}
+        QFrame#planningStep[stageState="current"] QLabel#stepTitle {{ color:{accent}; font-weight:600; }}
+        QFrame#planningStep[stageState="done"] QLabel#stepMarker {{ color:{colors['good']}; background:transparent; }}
+        QFrame#outlineCard {{ background:{card}; border:1px solid {line}; border-radius:12px; }}
+        QFrame#outlineCard:hover {{ border-color:{muted}; }}
+        QFrame#outlineCard[expanded="true"] {{ border-color:{accent}; }}
+        QLabel#outlineNumber {{ background:{selected}; color:{accent}; font:600 12px 'Consolas'; border-radius:9px; }}
+        QLabel#outlineSummary {{ font-size:15px; font-weight:600; }}
+        QPushButton#outlineEdit {{ background:transparent; color:{muted}; border:1px solid transparent; padding:4px 9px; min-height:18px; }}
+        QPushButton#outlineEdit:hover, QPushButton#outlineEdit[hovered="true"] {{ background:{hover}; border-color:{line}; color:{accent}; }}
+        QPushButton#outlineEdit:pressed {{ background:{pressed}; color:{accent}; }}
+        QPushButton#outlineEdit:focus {{ border-color:{accent}; }}
+        QToolButton#outlineToggle {{ background:transparent; color:{muted}; border:1px solid transparent; border-radius:6px; padding:4px 8px; }}
+        QToolButton#outlineToggle:hover, QToolButton#outlineToggle[hovered="true"], QToolButton#outlineToggle:checked {{ background:{hover}; color:{accent}; }}
+        QToolButton#outlineToggle:pressed {{ background:{pressed}; }}
+        QToolButton#outlineToggle:focus {{ border-color:{accent}; }}
+        QFrame#outlineDetails {{ background:{bg}; border:0; border-radius:8px; }}
+        QLabel#outlineDetailLabel {{ color:{muted}; font-size:12px; }}
+        QLabel#outlineDetailText {{ font-size:13px; }}
+        QFrame#outlineAssumptions {{ background:{sidebar}; border:0; border-radius:12px; }}
+        QLabel#outlineAssumptionTitle {{ color:{muted}; font-size:12px; font-weight:600; }}
+        QLabel#outlineAssumptionText {{ color:{muted}; font-size:12px; }}
         QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QSpinBox, QDateEdit, QTimeEdit {{
             background:{card}; border:1px solid {line}; border-radius:8px; padding:9px 10px; min-height:20px;
             selection-background-color:{selected}; selection-color:{ink};

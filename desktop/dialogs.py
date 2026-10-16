@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from desktop.controls import SoftComboBox as QComboBox
+from desktop.controls import ArrowWheelSpinBox as QSpinBox, ArrowWheelTimeEdit as QTimeEdit
 from desktop.calendar import configure_calendar
 
 from datetime import date
@@ -8,8 +9,8 @@ from html import escape
 
 from PySide6.QtCore import QDate, QTime, Qt
 from PySide6.QtWidgets import (QCheckBox, QDateEdit, QDialog, QDialogButtonBox,
-    QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QSpinBox,
-    QTextBrowser, QTimeEdit, QVBoxLayout, QWidget)
+    QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
+    QTextBrowser, QVBoxLayout, QWidget)
 
 from desktop.models import DesktopProfile, ModelConnection, PROVIDER_PRESETS
 from models import DailyTask

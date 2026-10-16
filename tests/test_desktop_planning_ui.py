@@ -171,6 +171,24 @@ def test_model_snapshot_only_changes_after_explicit_switch(ui, qtbot):
     assert calls[-1][1] == "mock-b"
 
 
+def test_outline_redraw_hides_old_cards_and_expands_without_requests(ui, qtbot):
+    from desktop.planning_widgets import OutlineCard
+    owner, config, calls, *_ = ui
+    d = draft(connection=config)
+    d.receive_turn(ready())
+    owner.open_planning(d)
+    flow = owner.planning_window
+    old = flow.findChildren(OutlineCard)
+    assert len(old) == 3 and flow.title.text() == '确认学习方向'
+    flow.render()
+    assert all(card.isHidden() for card in old)
+    QApplication.processEvents()  # Newly laid out widgets show on the next event pass.
+    cards = [card for card in flow.findChildren(OutlineCard) if not card.isHidden()]
+    assert len(cards) == 3
+    qtbot.keyClick(cards[0].toggle, Qt.Key.Key_Space)
+    assert cards[0].details.isVisible() and calls == []
+
+
 @pytest.mark.parametrize("change", ["delete", "address"])
 def test_changed_connection_requires_explicit_rebind_before_reading_key(ui, qtbot, change, monkeypatch):
     owner, config, calls, turns, gate, errors = ui

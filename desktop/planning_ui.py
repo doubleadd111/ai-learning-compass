@@ -11,7 +11,7 @@ from PySide6.QtCore import QDate, Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (QCheckBox, QDialog, QFormLayout, QHBoxLayout,
     QInputDialog, QLabel, QLineEdit, QListWidget, QMessageBox, QPlainTextEdit, QPushButton,
-    QScrollArea, QStackedWidget, QTextBrowser, QToolButton, QTreeWidget, QTreeWidgetItem, QHeaderView, QVBoxLayout, QWidget)
+    QScrollArea, QStackedWidget, QTextBrowser, QTreeWidget, QTreeWidgetItem, QHeaderView, QVBoxLayout, QWidget)
 from shiboken6 import isValid
 
 from desktop.dialogs import PlanDialog, spin
@@ -19,6 +19,7 @@ from desktop.gateway import GatewayError, ModelGateway
 from desktop.guide import open_guide
 from desktop.models import DesktopProfile, schedule_dates
 from desktop.planning import PlanningDraft, validate_proposal
+from desktop.planning_widgets import PlanningSteps, OutlineCard, assumptions_card
 from desktop.ui import readable_document
 from models import validate_plan_for_profile
 
@@ -66,12 +67,13 @@ class PlanningWindow(QDialog):
         layout.setContentsMargins(24, 22, 24, 22)
         layout.setSpacing(14)
         top = QHBoxLayout()
-        top.addWidget(note("调整你的学习安排" if draft.kind == "modify" else "先确认方向，再迈出第一步", True), 1)
+        self.title = note("", True)
+        top.addWidget(self.title, 1)
         top.addWidget(action("查看本步骤说明", self.help))
         layout.addLayout(top)
         self.shortcut = QShortcut(QKeySequence("F1"), self)
         self.shortcut.activated.connect(self.help)
-        self.steps = note("")
+        self.steps = PlanningSteps()
         layout.addWidget(self.steps)
         self.pages = QStackedWidget()
         layout.addWidget(self.pages, 1)
@@ -365,7 +367,9 @@ class PlanningWindow(QDialog):
         state = self.draft.state
         index = {"base": 0, "questions": 1, "outline": 2, "preview": 3}.get(state, 0)
         self.pages.setCurrentIndex(index)
-        self.steps.setText("资料  →  关键追问  →  概略确认  →  详细预览  →  保存    ·    当前：" + ["基础资料", "关键追问", "概略确认", "详细预览"][index])
+        self.title.setText(["调整学习计划" if self.draft.kind == "modify" else "创建学习计划",
+                            "补充关键资料", "确认学习方向", "检查修改预览" if self.draft.kind == "modify" else "检查每日任务"][index])
+        self.steps.set_stage(index)
         labels = ["发送资料，生成概略", "提交回答，继续", "确认概略，生成每日任务" if self.draft.kind == "create" else "确认概略，生成修改预览", "保存计划" if self.draft.kind == "create" else "应用全部修改"]
         self.next.setText(labels[index])
         self.back.setVisible(index != 0)
@@ -382,6 +386,7 @@ class PlanningWindow(QDialog):
         while layout.count():
             item = layout.takeAt(0)
             if item.widget():
+                item.widget().hide()
                 item.widget().deleteLater()
 
     def render_questions(self):
@@ -408,25 +413,13 @@ class PlanningWindow(QDialog):
 
     def render_outline(self):
         self.clear_layout(self.outline_layout)
-        self.outline_layout.addWidget(note("先看看，这是不是你想走的方向？", True))
-        for point in self.draft.outline.points:
-            toggle = QToolButton()
-            toggle.setText(point.summary)
-            toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-            toggle.setArrowType(Qt.ArrowType.RightArrow)
-            toggle.setCheckable(True)
-            toggle.setSizePolicy(toggle.sizePolicy().horizontalPolicy(), toggle.sizePolicy().verticalPolicy())
-            detail = note(f"阶段目标：{point.objective}\n主要内容：{point.content}\n预期产出：{point.deliverable}\n安排依据：{point.rationale}")
-            detail.hide()
-            def expand(checked, target=detail, control=toggle):
-                target.setVisible(checked)
-                control.setArrowType(Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
-            toggle.toggled.connect(expand)
-            self.outline_layout.addWidget(toggle)
-            self.outline_layout.addWidget(detail)
-            self.outline_layout.addWidget(action("修改这一点", lambda pid=point.id: self.modify_point(pid)), 0, Qt.AlignmentFlag.AlignLeft)
+        profile = self.draft.profile
+        self.outline_layout.addWidget(note(f"{len(self.draft.outline.points)} 个阶段 · {profile.plan_weeks} 周 · 每周 {profile.days_per_week} 天 · 每天最多 {profile.minutes_per_day} 分钟"))
+        self.outline_layout.addWidget(note("按顺序核对阶段方向。展开查看安排与产出，不满意可以单独修改。"))
+        for number, point in enumerate(self.draft.outline.points, 1):
+            self.outline_layout.addWidget(OutlineCard(number, point, self.modify_point))
         if self.draft.outline.assumptions:
-            self.outline_layout.addWidget(note("需要你确认的假设：\n" + "\n".join("• " + s for s in self.draft.outline.assumptions)))
+            self.outline_layout.addWidget(assumptions_card(self.draft.outline.assumptions))
         self.outline_layout.addStretch()
 
     def modify_point(self, point_id):

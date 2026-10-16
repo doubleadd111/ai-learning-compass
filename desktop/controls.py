@@ -2,7 +2,29 @@
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (QApplication, QComboBox, QFrame, QListView,
-                              QProxyStyle, QStyle, QStyledItemDelegate)
+                              QProxyStyle, QStyle, QStyledItemDelegate,
+                              QSpinBox, QTimeEdit, QStyleOptionSpinBox)
+
+
+class ArrowWheelOnly:
+    """Allow wheel stepping only over the style's real increment controls."""
+    def wheelEvent(self, event):
+        option = QStyleOptionSpinBox()
+        self.initStyleOption(option)
+        hit = self.style().hitTestComplexControl(QStyle.ComplexControl.CC_SpinBox,
+                                                option, event.position().toPoint(), self)
+        if hit in (QStyle.SubControl.SC_SpinBoxUp, QStyle.SubControl.SC_SpinBoxDown):
+            super().wheelEvent(event)
+        else:
+            event.ignore()
+
+
+class ArrowWheelSpinBox(ArrowWheelOnly, QSpinBox):
+    pass
+
+
+class ArrowWheelTimeEdit(ArrowWheelOnly, QTimeEdit):
+    pass
 
 
 def dropdown_colors():
