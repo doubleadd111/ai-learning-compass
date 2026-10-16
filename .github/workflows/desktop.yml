@@ -28,8 +28,8 @@ jobs:
           }
           python scripts/build_desktop.py --iscc $isccPath
       - run: python scripts/verify_desktop.py
-      - run: python scripts/verify_installer.py
+      - run: python scripts/verify_installer.py --iscc 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
       - uses: actions/upload-artifact@v4
         with:
-          name: LearningCompass-2026.10.9-windows-x64
+          name: LearningCompass-2026.10.10-windows-x64
           path: release/*

@@ -1,8 +1,13 @@
-#define AppVersion "2026.10.9"
+#define AppVersion "2026.10.10"
 #define AppName "学习罗盘"
 
 [Setup]
+#ifdef QAOutputDir
+; Isolated installer QA must never register as or remove the user's real app.
+AppId={{DB874C52-324E-4378-92A9-FD395B66E96F}
+#else
 AppId={{AFC764B4-94E8-4F93-A358-62B12B2794C2}
+#endif
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
@@ -14,7 +19,11 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
+#ifdef QAOutputDir
+OutputDir={#QAOutputDir}
+#else
 OutputDir=..\release
+#endif
 OutputBaseFilename=LearningCompass-{#AppVersion}-windows-x64-setup
 SetupIconFile=..\build\compass.ico
 UninstallDisplayIcon={app}\LearningCompass.exe
@@ -32,8 +41,10 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 Source: "..\dist\LearningCompass\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
+#ifndef QAOutputDir
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\LearningCompass.exe"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\LearningCompass.exe"; Tasks: desktopicon
+#endif
 
 [Run]
 Filename: "{app}\LearningCompass.exe"; Description: "Open Learning Compass"; Flags: nowait postinstall skipifsilent

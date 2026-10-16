@@ -1,5 +1,6 @@
 """只更新当前用户的已安装程序；先备份，不卸载、不读取系统凭据。"""
 import hashlib
+import argparse
 import json
 import os
 from pathlib import Path
@@ -33,6 +34,11 @@ def database_fingerprint(path):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--release", action="store_true", help="使用经过验证的正式发布构建清单")
+    args = parser.parse_args()
+    manifest_path = ROOT / ("release/build-manifest.json" if args.release else "build/local-test-manifest.json")
+    build_kind = "release" if args.release else "local-test"
     target = (Path(os.environ["LOCALAPPDATA"]) / "Programs" / "LearningCompass").resolve()
     key = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{AFC764B4-94E8-4F93-A358-62B12B2794C2}_is1"
     try:
@@ -44,7 +50,7 @@ def main():
         known = []
         for record in (ROOT / ".learning_compass" / "qa" / "known-local-builds").glob("*.json"):
             data = json.loads(record.read_text(encoding="utf-8"))
-            if data.get("kind") == "local-test":
+            if data.get("kind") in {"local-test", "release"}:
                 known.append(data.get("exe_sha256"))
         legacy = ROOT / "release" / "LearningCompass-2026.10.0-windows-x64-portable.zip"
         if legacy.is_file():
@@ -61,8 +67,8 @@ def main():
     if running.stdout.strip():
         raise RuntimeError("请先从托盘完全退出学习罗盘，再更新；不强制终止以免丢失记录。")
     source = (ROOT / "dist" / "LearningCompass").resolve()
-    manifest = json.loads((ROOT / "build" / "local-test-manifest.json").read_text(encoding="utf-8"))
-    if manifest["version"] != VERSION or manifest["source_sha256"] != source_digest():
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("kind") != build_kind or manifest["version"] != VERSION or manifest["source_sha256"] != source_digest():
         raise RuntimeError("测试构建与当前源码不一致，停止更新。")
     if hashlib.sha256((source / "LearningCompass.exe").read_bytes()).hexdigest() != manifest["exe_sha256"]:
         raise RuntimeError("测试程序校验不通过，停止更新。")
@@ -88,8 +94,8 @@ def main():
         raise RuntimeError("学习数据在更新期间发生变化，请先检查记录，不自动覆盖用户数据。")
     known_directory = ROOT / ".learning_compass" / "qa" / "known-local-builds"
     known_directory.mkdir(exist_ok=True)
-    shutil.copy2(ROOT / "build" / "local-test-manifest.json", known_directory / f"{VERSION}-{manifest['exe_sha256'][:12]}.json")
-    report = dict(version=VERSION, kind="local-test", target=str(target), recovery=str(recovery),
+    shutil.copy2(manifest_path, known_directory / f"{VERSION}-{manifest['exe_sha256'][:12]}.json")
+    report = dict(version=VERSION, kind=build_kind, target=str(target), recovery=str(recovery),
                   data_unchanged=True, credentials_untouched=True, exe_sha256=manifest["exe_sha256"],
                   source_sha256=manifest["source_sha256"], updated_at=datetime.now().isoformat())
     (recovery / "update-report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")

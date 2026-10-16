@@ -31,6 +31,7 @@ def instructions(profile: DesktopProfile):
 时间很短时，不要把环境安装与学习新概念都塞进一次任务；提供已经可用环境中的最小练习。
 时间很长时，在同一任务中写明学习、练习、验证和休息的安排，不用一个几分钟的小练习充满整个时段。
 保留合理休息和复习，按先修关系递进。不要编造链接、课程或保证效果。
+整份计划的title是便于辨认的短名称，建议8–20字；只概括核心主题，不复述学习目标、学习科目长句或列举全部功能。详细范围与产出写入overview，不能因缩短名称删减学习内容。
 只输出符合所给结构的JSON，不输出Markdown或额外解释。"""
     if profile.subject.strip().lower() in {"python", "python编程", "python 编程"}:
         text += "\nPython主题顺序：\n" + curriculum_prompt()
@@ -42,7 +43,7 @@ def user_prompt(profile, context="", correction=""):
 {profile.model_dump_json()}
 每周恰好{profile.days_per_week}天，每天最多{profile.minutes_per_day}分钟，每周总时长不超过{profile.weekly_minutes}分钟。
 每个任务包含day、title、description、duration_minutes、deliverable；每周包含week_number、theme、milestone、tasks；
-整份计划包含title、overview、weekly_plans、learning_tips（2至5条）。描述保持简洁。"""
+整份计划包含title、overview、weekly_plans、learning_tips（2至5条）。title建议8–20字，只概括核心主题，完整目标与范围放在overview。描述保持简洁。"""
     if context:
         result += "\n调整背景：" + context
     if correction:

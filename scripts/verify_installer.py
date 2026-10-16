@@ -1,5 +1,6 @@
 """隔离目录安装、覆盖升级与卸载验证；不触碰正式学习数据。"""
 import json
+import argparse
 import os
 from pathlib import Path
 import subprocess
@@ -20,17 +21,23 @@ def run_hidden(command, **kwargs):
 
 
 def main():
-    uninstall_key = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{AFC764B4-94E8-4F93-A358-62B12B2794C2}_is1"
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--iscc", type=Path, default=ROOT / ".tools/InnoSetup/ISCC.exe")
+    args = parser.parse_args()
+    uninstall_key = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{DB874C52-324E-4378-92A9-FD395B66E96F}_is1"
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, uninstall_key):
-            raise RuntimeError("已存在正式安装，跳过安装包自动验收，避免覆盖。")
+            raise RuntimeError("上一次隔离验收尚未清理，请先检查，避免覆盖。")
     except FileNotFoundError:
         pass
     work = ROOT / ".learning_compass" / "qa" / ("installer-" + uuid.uuid4().hex)
     work.mkdir(parents=True)
     install = work / "installed"
     data = work / "data"
-    setup = ROOT / "release" / f"LearningCompass-{VERSION}-windows-x64-setup.exe"
+    # Same installer source and payload, distinct AppId, no real shortcuts.
+    run_hidden([str(args.iscc.resolve()), "/Q", f"/DQAOutputDir={work}",
+                str(ROOT / "packaging/installer.iss")], cwd=ROOT)
+    setup = work / f"LearningCompass-{VERSION}-windows-x64-setup.exe"
     command = [str(setup), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-",
                f"/DIR={install}", "/GROUP=LearningCompass-QA-2026.10", "/TASKS=",
                f"/LOG={work / 'install.log'}"]
@@ -59,7 +66,8 @@ def main():
     assert Store(data).tasks()[0]["note"] == "安装升级卸载保留检查"
     output = ROOT / "release" / "verification.json"
     report = json.loads(output.read_text(encoding="utf-8"))
-    report.update(per_user_install=True, reinstall_upgrade=True, uninstall_preserved_data=True)
+    report.update(per_user_install=True, reinstall_upgrade=True, uninstall_preserved_data=True,
+                  installer_qa_isolated_app_id=True)
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False))
 

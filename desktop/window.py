@@ -35,6 +35,7 @@ from desktop.week_view import WeekPanel, attach_focus_button
 from desktop.diagnostics import ConnectionDiagnostic
 from desktop.task_status import display_status
 from desktop.task_style import TaskItemDelegate, mark_overdue
+from desktop.plan_list import PlanListDelegate, populate_plan_item
 
 
 def label(text, *, name=None, wrap=False):
@@ -305,6 +306,10 @@ class MainWindow(QMainWindow):
                                     button("查看需求与历史", self.show_history), button("继续草稿", self.resume_draft)))
         columns = QHBoxLayout()
         self.plan_list = QListWidget()
+        self.plan_list.setObjectName("planLibraryList")
+        self.plan_list.setItemDelegate(PlanListDelegate(self.plan_list))
+        self.plan_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.plan_list.setUniformItemSizes(True)
         self.plan_list.setMinimumWidth(215)
         self.plan_list.setMaximumWidth(255)
         self.plan_list.currentItemChanged.connect(self.plan_selected)
@@ -570,8 +575,8 @@ class MainWindow(QMainWindow):
         chosen = 0
         for i, plan in enumerate(self.store.list_plans(self.search.text(), self.archived.isChecked())):
             profile = DesktopProfile.model_validate_json(plan["profile_json"])
-            item = QListWidgetItem(f"{plan['title']}\n{profile.subject} · {plan['completed']}/{plan['total']} 项完成")
-            item.setData(Qt.ItemDataRole.UserRole, plan["id"])
+            item = QListWidgetItem()
+            populate_plan_item(item, plan, profile.subject)
             self.plan_list.addItem(item)
             if plan["id"] == previous:
                 chosen = i

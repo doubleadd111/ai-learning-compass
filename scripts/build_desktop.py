@@ -91,7 +91,9 @@ def main():
     subprocess.run([str(args.iscc.resolve()), "/Q", str(ROOT / "packaging" / "installer.iss")], cwd=ROOT, check=True)
     if source_digest() != source_hash:
         raise RuntimeError("构建期间源码发生变化，请在代码稳定后重新构建，以保证产物与源码一致。")
-    manifest = {"version": VERSION, "source_sha256": source_hash, "python": sys.version.split()[0], "dependencies": installed, "artifacts": {}}
+    manifest = {"version": VERSION, "kind": "release", "source_sha256": source_hash,
+                "exe_sha256": hashlib.sha256((ROOT / "dist/LearningCompass/LearningCompass.exe").read_bytes()).hexdigest(),
+                "python": sys.version.split()[0], "dependencies": installed, "artifacts": {}}
     for file in [portable, release / f"LearningCompass-{VERSION}-windows-x64-setup.exe"]:
         manifest["artifacts"][file.name] = {"size": file.stat().st_size, "sha256": hashlib.sha256(file.read_bytes()).hexdigest()}
     (release / "build-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")

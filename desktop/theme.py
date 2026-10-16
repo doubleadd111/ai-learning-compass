@@ -192,6 +192,7 @@ def apply_theme(app, choice="system"):
         QCheckBox::indicator:disabled {{ background:{colors['disabled']}; border-color:{line}; }}
         QListWidget, QTreeWidget, QTableWidget {{ background:{card}; alternate-background-color:{card}; border:1px solid {line}; border-radius:12px; padding:5px; outline:0; }}
         QListWidget::item {{ padding:15px 14px; margin:3px; border:1px solid transparent; border-radius:9px; }}
+        QListWidget#planLibraryList::item {{ padding:0; }}
         QListWidget::item:hover, QTreeWidget::item:hover {{ background:{hover}; }}
         QListWidget::item:selected {{ background:{selected}; border-color:{accent}; color:{ink}; }}
         QTreeWidget::item:selected, QTableWidget::item:selected {{ background:{selected}; color:{ink}; }}
