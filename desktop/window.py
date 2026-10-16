@@ -264,7 +264,24 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.welcome)
         self.sample_button = button("载入两周 Python 体验样例（无需 API）", self.load_sample)
         layout.addWidget(self.sample_button, 0, Qt.AlignmentFlag.AlignLeft)
-        layout.addWidget(label("今天与未完成的任务 · 双击填写记录", name="muted"))
+        task_filters = QHBoxLayout()
+        task_filters.addWidget(label("今天与未完成的任务 · 双击填写记录", name="muted"), 1)
+        plan_label = label("按计划", name="muted")
+        task_filters.addWidget(plan_label)
+        self.today_plan_filter = QComboBox()
+        self.today_plan_filter.setAccessibleName("今日任务按计划筛选")
+        self.today_plan_filter.setMinimumWidth(180)
+        self.today_plan_filter.setMaximumWidth(300)
+        self.today_plan_filter.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.today_plan_filter.setMinimumContentsLength(10)
+        self.today_plan_filter.addItem("全部任务", None)
+        self.today_plan_filter.setToolTip("筛选今日与逾期未完成任务；不改变上方全局周统计。")
+        plan_label.setBuddy(self.today_plan_filter)
+        self.today_plan_filter.currentIndexChanged.connect(self.refresh_today_tasks)
+        task_filters.addWidget(self.today_plan_filter)
+        layout.addLayout(task_filters)
+        self.today_empty = label("", name="muted", wrap=True)
+        layout.addWidget(self.today_empty)
         self.today_tree = task_tree()
         self.today_tree.itemDoubleClicked.connect(self.edit_tree_task)
         layout.addWidget(self.today_tree, 1)
@@ -504,7 +521,33 @@ class MainWindow(QMainWindow):
         empty = not self.store.list_plans() and not self.store.list_plans(archived=True)
         self.welcome.setVisible(empty)
         self.sample_button.setVisible(empty)
-        self.fill_tasks(self.today_tree, [t for t in rows if t["due_date"] <= today.isoformat() and t["status"] != "已完成"])
+        previous = self.today_plan_filter.currentData()
+        self.today_plan_filter.blockSignals(True)
+        self.today_plan_filter.clear()
+        self.today_plan_filter.addItem("全部任务", None)
+        for plan in self.store.list_plans():
+            self.today_plan_filter.addItem(plan["title"], plan["id"])
+            self.today_plan_filter.setItemData(self.today_plan_filter.count() - 1,
+                                               plan["title"], Qt.ItemDataRole.ToolTipRole)
+        self.today_plan_filter.setCurrentIndex(max(0, self.today_plan_filter.findData(previous)))
+        self.today_plan_filter.blockSignals(False)
+        self.refresh_today_tasks()
+
+    def refresh_today_tasks(self, *_args):
+        """Filter the existing Today scope without changing data or global statistics."""
+        selected = self.today_tree.currentItem()
+        selected_id = selected.data(0, Qt.ItemDataRole.UserRole) if selected else None
+        rows = self.store.tasks(self.today_plan_filter.currentData(), due=date.today().isoformat())
+        self.fill_tasks(self.today_tree, rows)
+        for i in range(self.today_tree.topLevelItemCount()):
+            item = self.today_tree.topLevelItem(i)
+            if item.data(0, Qt.ItemDataRole.UserRole) == selected_id:
+                self.today_tree.setCurrentItem(item)
+                break
+        self.today_empty.setText("该计划没有今日或逾期的未完成任务。未来任务可在计划库或周视图查看。"
+                                 if self.today_plan_filter.currentData() else
+                                 "没有今日或逾期的未完成任务。未来任务可在计划库或周视图查看。")
+        self.today_empty.setVisible(not rows)
 
     def fill_tasks(self, tree, rows):
         tree.clear()
