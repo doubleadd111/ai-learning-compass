@@ -12,13 +12,15 @@ LIGHT = dict(bg="#F6F7F9", card="#FFFFFF", ink="#202938", muted="#68758A",
              selected="#E5EDFF", pressed="#D4E1FF", primary_hover="#255AE0",
              primary_pressed="#1B48BD", disabled="#EFF1F5", danger="#B73E4C",
              danger_hover="#FFF0F1", track="#E9EDF3", good="#238371",
-             progress_fill="#5B7FE8", progress_track="#E9EEF9")
+             progress_fill="#5B7FE8", progress_track="#E9EEF9",
+             overdue="#B64036", overdue_bg="#FFF0EC", overdue_line="#E8A49B", overdue_text="#FFFFFF")
 DARK = dict(bg="#15191F", card="#1D232C", ink="#EBEFF6", muted="#A2AFC1",
             line="#343E4D", accent="#83A9FF", sidebar="#191F28", hover="#293750",
             selected="#283B5C", pressed="#364C71", primary_hover="#2E60DC",
             primary_pressed="#2859CD", disabled="#242B35", danger="#FFA1AA",
             danger_hover="#3B2832", track="#303A49", good="#68C9B1",
-            progress_fill="#8DAAF2", progress_track="#2A354B")
+            progress_fill="#8DAAF2", progress_track="#2A354B",
+            overdue="#FFAEA3", overdue_bg="#3B272A", overdue_line="#A7615A", overdue_text="#251C1E")
 
 
 def compass_icon(size=128):
@@ -55,6 +57,7 @@ def apply_theme(app, choice="system"):
         app.installEventFilter(app._button_feedback)
     app.setProperty("iconColor", muted)
     app.setProperty("accentColor", accent)
+    app.setProperty("overdueColors", dict(ink=colors["overdue"], background=colors["overdue_bg"], badge_text=colors["overdue_text"]))
     app.setProperty("statusColors", {"未开始": muted, "进行中": accent,
                                      "已完成": colors["good"], "延期": colors["danger"]})
     pal = QPalette()
@@ -151,6 +154,9 @@ def apply_theme(app, choice="system"):
         QFrame#weekDay[currentDay="true"] {{ border-color:{accent}; }}
         QFrame#weekTask {{ background:{bg}; border:1px solid {line}; border-radius:8px; }}
         QFrame#weekTask:hover, QFrame#weekTask[selected="true"], QFrame#weekTask:focus {{ border-color:{accent}; }}
+        QFrame#weekTask[overdue="true"] {{ background:{colors['overdue_bg']}; border-color:{colors['overdue_line']}; }}
+        QFrame#weekTask[overdue="true"]:hover, QFrame#weekTask[overdue="true"][selected="true"], QFrame#weekTask[overdue="true"]:focus {{ border-color:{colors['overdue']}; }}
+        QLabel#overdueBadge {{ background:{colors['overdue']}; color:{colors['overdue_text']}; font-size:11px; font-weight:600; padding:3px 7px; border-radius:5px; }}
         QLabel#taskStatus {{ color:{muted}; }}
         QLabel#taskStatus[taskState="进行中"] {{ color:{accent}; }}
         QLabel#taskStatus[taskState="已完成"] {{ color:{colors['good']}; }}

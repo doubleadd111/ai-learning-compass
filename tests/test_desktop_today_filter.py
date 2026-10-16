@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QFontDatabase
+from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtWidgets import QApplication
 
 import desktop.window as window_module
@@ -27,9 +27,10 @@ def ui(qtbot, tmp_path, monkeypatch):
         def today(cls):
             return cls(2026, 10, 16)
     monkeypatch.setattr(window_module, "date", FixedDate)
+    original_font = QFont(QApplication.instance().font())
     font = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "msyh.ttc"
-    if font.exists() and "Microsoft YaHei UI" not in QFontDatabase.families():
-        QFontDatabase.addApplicationFont(str(font))
+    font_id = (QFontDatabase.addApplicationFont(str(font))
+               if font.exists() and "Microsoft YaHei UI" not in QFontDatabase.families() else -1)
     apply_theme(QApplication.instance(), "light")
     window = MainWindow(Store(tmp_path), credentials=CredentialStore(object()), enable_tray=False)
     qtbot.addWidget(window)
@@ -37,6 +38,9 @@ def ui(qtbot, tmp_path, monkeypatch):
     yield window
     window.exiting = True
     window.close()
+    if font_id >= 0:
+        QFontDatabase.removeApplicationFont(font_id)
+    QApplication.instance().setFont(original_font)
 
 
 def ids(ui):

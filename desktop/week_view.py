@@ -3,13 +3,14 @@ from datetime import date, timedelta
 from html import escape
 
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (QApplication, QFrame, QGridLayout, QHBoxLayout, QHeaderView,
     QLabel, QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QTextBrowser,
-    QStyledItemDelegate, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
+    QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from desktop.models import DesktopProfile
 from desktop.controls import SoftComboBox as QComboBox
+from desktop.task_status import overdue_days, display_status, matches_status
+from desktop.task_style import TaskItemDelegate, mark_overdue
 
 
 def text(value, muted=False):
@@ -45,27 +46,25 @@ def attach_focus_button(tree, item, column, row, callback):
     tree.setItemWidget(item, column, focus_button(row, callback))
 
 
-class StatusDelegate(QStyledItemDelegate):
-    def initStyleOption(self, option, index):
-        super().initStyleOption(option, index)
-        colors = QApplication.instance().property("statusColors") or {}
-        if color := colors.get(index.data()):
-            option.palette.setColor(QPalette.ColorRole.Text, QColor(color))
-            option.palette.setColor(QPalette.ColorRole.HighlightedText, QColor(color))
-
-
 class TaskCard(QFrame):
-    def __init__(self, row, select, edit, focus, parent=None):
+    def __init__(self, row, select, edit, focus, parent=None, today=None):
         super().__init__(parent)
         self.task_id = row["id"]
         self.select, self.edit = select, edit
         self.setObjectName("weekTask")
+        days = overdue_days(row, today)
+        self.setProperty("overdue", bool(days))
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
         title = row["task"].title
+        if days:
+            badge = text(f"逾期 {days} 天")
+            badge.setObjectName("overdueBadge")
+            badge.setWordWrap(False)
+            layout.addWidget(badge, 0, Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(text(title[:32] + ("…" if len(title) > 32 else "")))
         plan_title = row["plan_title"]
         layout.addWidget(text(plan_title[:20] + ("…" if len(plan_title) > 20 else ""), True))
@@ -106,7 +105,8 @@ class WeekPanel(QWidget):
         self.plan_filter.setAccessibleName("按计划筛选周任务")
         self.subject_filter.setAccessibleName("按科目筛选周任务")
         self.status_filter.setAccessibleName("按状态筛选周任务")
-        self.status_filter.addItems(["全部状态", "未开始", "进行中", "延期", "已完成"])
+        self.status_filter.addItems(["全部状态", "未开始", "进行中", "延期", "逾期", "已完成"])
+        self.status_filter.setToolTip("逾期按今天自动判断：日期早于今天且尚未完成。原完成状态仍保留；只筛选当前显示周。")
         for column, (title, widget) in enumerate((("计划", self.plan_filter), ("科目", self.subject_filter), ("状态", self.status_filter))):
             filters.addWidget(text(title, True), 0, column)
             filters.addWidget(widget, 1, column)
@@ -130,7 +130,7 @@ class WeekPanel(QWidget):
         self.table.setRootIsDecorated(False)
         self.table.setAlternatingRowColors(True)
         self.table.setHeaderLabels(["任务", "日期", "所属计划", "预计", "累计实际", "状态", "操作"])
-        self.table.setItemDelegateForColumn(5, StatusDelegate(self.table))
+        self.table.setItemDelegate(TaskItemDelegate(self.table, status_column=5))
         self.table.header().setStretchLastSection(False)
         self.table.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         for column in range(1, 7):
@@ -178,19 +178,22 @@ class WeekPanel(QWidget):
         if not hasattr(self, "all_rows"):
             return
         plan, subject, status = self.plan_filter.currentData(), self.subject_filter.currentData(), self.status_filter.currentText()
+        today = date.today()
         self.rows = [r for r in self.all_rows if (not plan or r["plan_id"] == plan) and
-                     (not subject or self.subjects[r["plan_id"]] == subject) and (status == "全部状态" or r["status"] == status)]
+                     (not subject or self.subjects[r["plan_id"]] == subject) and matches_status(r, status, today)]
         done = sum(r["status"] == "已完成" for r in self.rows)
         expected = sum(r["task"].duration_minutes for r in self.rows)
         actual = sum(r["manual_seconds"] + r["focus_seconds"] for r in self.rows) // 60
-        self.summary.setText(f"筛选后：{len(self.rows)} 项 · 已完成 {done} 项 · 预计 {expected} 分钟 · 任务累计实际 {actual} 分钟（按本周排期归属）")
+        late = sum(overdue_days(r, today) > 0 for r in self.rows)
+        self.summary.setText(f"筛选后：{len(self.rows)} 项 · 已完成 {done} 项 · 逾期 {late} 项 · 预计 {expected} 分钟 · 任务累计实际 {actual} 分钟（按本周排期归属）")
         self.table.blockSignals(True)
         self.table.clear()
         for row in self.rows:
             item = QTreeWidgetItem([row["task"].title, row["due_date"], row["plan_title"], f"{row['task'].duration_minutes} 分钟",
-                                    f"{(row['manual_seconds'] + row['focus_seconds']) // 60} 分钟", row["status"], ""])
+                                    f"{(row['manual_seconds'] + row['focus_seconds']) // 60} 分钟", display_status(row, today), ""])
             item.setData(0, Qt.ItemDataRole.UserRole, row["id"])
             item.setToolTip(0, row["task"].description)
+            mark_overdue(item, row, 7, today)
             self.table.addTopLevelItem(item)
             attach_focus_button(self.table, item, 6, row, self.start_focus)
             if row["id"] == self.selected_id:
@@ -214,7 +217,7 @@ class WeekPanel(QWidget):
             inner.addWidget(text(f"{'今天 · ' if day == date.today() else ''}周{'一二三四五六日'[offset]}\n{day:%Y-%m-%d}"))
             inner.addWidget(text(f"{sum(r['status']=='已完成' for r in daily)}/{len(daily)}项完成\n预计 {sum(r['task'].duration_minutes for r in daily)} 分钟", True))
             for row in daily:
-                card = TaskCard(row, self.select_task, self.edit_task, self.start_focus)
+                card = TaskCard(row, self.select_task, self.edit_task, self.start_focus, today=today)
                 self.cards.append(card)
                 inner.addWidget(card)
             if not daily:
@@ -223,6 +226,7 @@ class WeekPanel(QWidget):
             box.addWidget(column, 1)
         old = self.calendar.takeWidget()
         if old:
+            old.hide()
             old.deleteLater()
         self.calendar.setWidget(contents)
         if self.selected_id not in {r["id"] for r in self.rows}:
@@ -243,7 +247,9 @@ class WeekPanel(QWidget):
         self.edit_button.setEnabled(row is not None)
         if row:
             task = row["task"]
-            self.detail.setHtml(f"<b>{escape(task.title)}</b> · {escape(row['due_date'])}<br>{escape(task.description).replace(chr(10), '<br>')}<br><b>产出：</b>{escape(task.deliverable)}")
+            days = overdue_days(row, date.today())
+            late = f" · 逾期 {days} 天" if days else ""
+            self.detail.setHtml(f"<b>{escape(task.title)}</b> · {escape(row['due_date'])}{late}<br>{escape(task.description).replace(chr(10), '<br>')}<br><b>产出：</b>{escape(task.deliverable)}")
             self.table.blockSignals(True)
             for index in range(self.table.topLevelItemCount()):
                 item = self.table.topLevelItem(index)

@@ -33,6 +33,8 @@ from desktop.planning import PlanningDraft, modification_context
 from desktop.planning_ui import PlanningWindow, ModificationDialog, DraftsDialog, HistoryWindow
 from desktop.week_view import WeekPanel, attach_focus_button
 from desktop.diagnostics import ConnectionDiagnostic
+from desktop.task_status import display_status
+from desktop.task_style import TaskItemDelegate, mark_overdue
 
 
 def label(text, *, name=None, wrap=False):
@@ -77,6 +79,7 @@ def page_layout():
 
 def task_tree():
     tree = QTreeWidget()
+    tree.setItemDelegate(TaskItemDelegate(tree))
     tree.setHeaderLabels(["任务", "日期", "预计", "状态", "操作"])
     tree.setRootIsDecorated(False)
     tree.setAlternatingRowColors(True)
@@ -113,6 +116,7 @@ class MainWindow(QMainWindow):
         self.request_status_timer.setInterval(100)
         self.request_status_timer.timeout.connect(self.update_request_status)
         self.selected_plan_id = None
+        self.display_date = date.today()
         self.planning_window = None
         self.history_windows = []
         self.exiting = False
@@ -552,9 +556,10 @@ class MainWindow(QMainWindow):
     def fill_tasks(self, tree, rows):
         tree.clear()
         for task in rows:
-            item = QTreeWidgetItem([task["task"].title, task["due_date"], f"{task['task'].duration_minutes} 分钟", task["status"], ""])
+            item = QTreeWidgetItem([task["task"].title, task["due_date"], f"{task['task'].duration_minutes} 分钟", display_status(task, date.today()), ""])
             item.setData(0, Qt.ItemDataRole.UserRole, task["id"])
             item.setToolTip(0, f"{task['plan_title']} · 第{task['week']}周第{task['day']}天\n{task['task'].description}\n产出：{task['task'].deliverable}")
+            mark_overdue(item, task, 5, date.today())
             tree.addTopLevelItem(item)
             attach_focus_button(tree, item, 4, task, self.start_focus_for_task)
 
@@ -1026,6 +1031,11 @@ class MainWindow(QMainWindow):
         self.refresh_today()
 
     def tick(self):
+        if self.display_date != date.today():
+            self.display_date = date.today()
+            self.refresh_today()
+            self.refresh_library()
+            self.refresh_week()
         event = self.focus.tick()
         seconds = max(0, math.ceil(self.focus.remaining))
         self.timer_label.setText(f"{seconds // 60:02d}:{seconds % 60:02d}")
