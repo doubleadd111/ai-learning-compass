@@ -253,7 +253,7 @@ class ModelGateway:
             metrics["latency_ms"] = round((perf_counter() - started) * 1000)
 
     def clarify(self, draft, *, cancelled=None):
-        from desktop.planning import PlanningTurn
+        from desktop.planning import ClarificationPayload, PlanningTurn
         system = """你是中文学习需求顾问。只返回规定JSON，不输出内部推理。
         仅当关键资料缺失或矛盾时追问，每轮1–3问，每题2–4个互斥参考选项；用户还可以自由回答或跳过。
         不重复询问已回答的问题。达到追问上限或快速模式必须直接给概略，假设放在assumptions。
@@ -263,6 +263,12 @@ class ModelGateway:
         prompt = json.dumps(dict(data=draft.context(), force_outline=draft.quick or draft.rounds >= 2,
                                  asked_rounds=draft.rounds,
                                  previous_outline=draft.outline.model_dump() if draft.outline else None), ensure_ascii=False)
+        if self.connection.provider == "DeepSeek" and self.connection.output_format == "json_schema":
+            system += "\n本次传输格式使用outlines数组（不是outline可空对象）：追问时decision=ask、outlines=[]；"
+            system += "概略时decision=outline、questions=[]、outlines=[一份完整概略对象]。概略对象包含points及assumptions。"
+            payload, event = self.structured(ClarificationPayload, system, prompt, "planning_clarification",
+                validate=lambda value: draft.model_copy(deep=True).receive_turn(value.to_turn()), cancelled=cancelled)
+            return payload.to_turn(), event
         return self.structured(PlanningTurn, system, prompt, "planning_clarification",
                                validate=lambda turn: draft.model_copy(deep=True).receive_turn(turn), cancelled=cancelled)
 

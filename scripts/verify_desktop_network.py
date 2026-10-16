@@ -17,7 +17,7 @@ from planner import UNSUPPORTED_STRUCTURED_OUTPUT_KEYWORDS
 
 def incompatible(node):
     if isinstance(node, dict):
-        return bool(set(node) & UNSUPPORTED_STRUCTURED_OUTPUT_KEYWORDS) or any(incompatible(v) for v in node.values())
+        return bool(set(node) & (UNSUPPORTED_STRUCTURED_OUTPUT_KEYWORDS | {"anyOf"})) or any(incompatible(v) for v in node.values())
     if isinstance(node, list):
         return any(incompatible(v) for v in node)
     return False
@@ -61,10 +61,10 @@ def main():
             if operation == "connection_test":
                 text = '{"ok":true}'
             elif operation == "planning_clarification":
-                text = json.dumps(dict(decision="outline", questions=[], outline=dict(points=[
+                text = json.dumps(dict(decision="outline", questions=[], outlines=[dict(points=[
                     dict(id=f"stage-{i}", summary="从基础概念开始，通过短练习巩固关键步骤，并留下可以检查的学习产出。",
                          objective="完成基础学习", content="运行并修改最小练习", deliverable="可检查的练习", rationale="根据可用时间安排")
-                    for i in range(3)], assumptions=["使用已有学习设备"])), ensure_ascii=False)
+                    for i in range(3)], assumptions=["使用已有学习设备"])]), ensure_ascii=False)
             else:
                 text = sample_learning_plan()[1].model_dump_json()
             usage = dict(input_tokens=10, output_tokens=20, total_tokens=30)

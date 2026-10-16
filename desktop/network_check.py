@@ -43,7 +43,7 @@ def run_network_check(url, directory):
     profile, _plan = sample_learning_plan()
     profile = DesktopProfile.model_validate(profile.model_dump())
     def exercise(protocol, mode):
-        config = ModelConnection(name="隔离网络自检", base_url=url, model="loopback-model", api_type=protocol, output_format="json_schema", network_mode=mode)
+        config = ModelConnection(name="隔离网络自检", provider="DeepSeek", base_url=url, model="loopback-model", api_type=protocol, output_format="json_schema", network_mode=mode)
         gateway = ModelGateway(config, "loopback-placeholder-not-a-real-key")
         try:
             for operation in ("models", "connection_test", "planning_clarification", "study_plan"):

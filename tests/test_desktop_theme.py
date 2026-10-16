@@ -6,7 +6,7 @@ pytest.importorskip("PySide6")
 pytest.importorskip("pytestqt")
 
 from PySide6.QtCore import QEvent, QPoint, Qt
-from PySide6.QtWidgets import QApplication, QDialogButtonBox, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QDialogButtonBox, QPushButton, QScrollArea, QVBoxLayout, QWidget
 from desktop.credentials import CredentialStore
 from desktop.dialogs import PlanDialog
 from desktop.store import Store
@@ -95,6 +95,14 @@ def test_pages_fit_supported_sizes_and_theme_switch_keeps_navigation(qtbot, tmp_
         assert not window.nav[index].icon().isNull()
         for control in window.stack.currentWidget().findChildren(QPushButton):
             if control.isVisible():
+                # The seven-day view intentionally scrolls in a compact window.
+                # isVisible() includes children clipped outside its viewport.
+                parent = control.parentWidget()
+                while parent is not None and not isinstance(parent, QScrollArea):
+                    parent = parent.parentWidget()
+                if parent is not None and parent.widget().isAncestorOf(control):
+                    parent.ensureWidgetVisible(control, 0, 0)
+                    app.processEvents()
                 corner = control.mapTo(window, control.rect().bottomRight())
                 assert 0 <= corner.x() < window.width(), control.text()
                 assert 0 <= corner.y() < window.height(), control.text()

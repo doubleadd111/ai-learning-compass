@@ -66,6 +66,25 @@ class PlanningTurn(StrictModel):
         return self
 
 
+class ClarificationPayload(StrictModel):
+    """DeepSeek strict wire shape, without a nullable-object anyOf branch.
+
+    Keep the domain model and saved drafts unchanged; validate both layers.
+    """
+    decision: Literal["ask", "outline"]
+    questions: list[ClarificationQuestion] = Field(max_length=3)
+    outlines: list[PlanOutline] = Field(max_length=1)
+
+    def to_turn(self):
+        return PlanningTurn(decision=self.decision, questions=self.questions,
+                            outline=self.outlines[0] if self.outlines else None)
+
+    @model_validator(mode="after")
+    def validate_turn(self):
+        self.to_turn()
+        return self
+
+
 class QuestionAnswer(StrictModel):
     id: str
     question: str

@@ -22,6 +22,7 @@ class ConnectionDiagnostic(BaseModel):
     output_format: Literal["json_schema", "json_object"] | None = None
     service_code: Literal["invalid_json_schema", "invalid_request_error", "unsupported_parameter", "unsupported_value", "model_not_found", "invalid_model", "not_found"] | None = None
     error_field: Literal["json_schema", "output_format", "model", "output_tokens", "reasoning", "unknown"] | None = None
+    schema_feature: Literal["union_type"] | None = None
 
     def summary(self):
         labels = {"models": "获取模型列表", "connection_test": "JSON连接测试",
@@ -31,6 +32,7 @@ class ConnectionDiagnostic(BaseModel):
                 f"类别：{self.category}\n路由：{'直连' if self.network_mode == 'direct' else '默认代理'}\n"
                 f"接口：{self.api_type or '未记录'} / {self.output_format or '未记录'}\n"
                 f"服务错误码：{self.service_code or '未记录'}\n参数类别：{self.error_field or '未记录'}\n"
+                f"结构类别：{'联合类型（anyOf）' if self.schema_feature == 'union_type' else '未记录'}\n"
                 f"异常类型：{' → '.join(self.exception_types) or '无'}")
 
 
@@ -53,7 +55,14 @@ def api_error_details(error):
     field = fields.get(param, "unknown") if isinstance(param, str) else "unknown"
     if code == "invalid_json_schema":
         field = "json_schema"
-    return dict(service_code=code, error_field=field)
+    details = dict(service_code=code, error_field=field)
+    message = body.get("message")
+    if isinstance(message, str):
+        # Interpret in memory; expose only a fixed classification, never excerpts.
+        message = message.casefold()
+        if "schema" in message and "anyof" in message and any(word in message for word in ("invalid", "unsupported", "not supported", "not allowed")):
+            details.update(error_field="json_schema", schema_feature="union_type")
+    return details
 
 
 def classify(error):
