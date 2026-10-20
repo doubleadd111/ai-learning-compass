@@ -60,7 +60,7 @@ def test_global_guide_ownerless_minimize_restore_and_preserve_chapter(ui, qtbot)
 def test_guide_actual_spacing_indentation_and_code_preserved(ui):
     guide = open_guide(ui, "modify")
     block = guide.browser.document().begin().next()
-    while block.isValid() and block.blockFormat().headingLevel():
+    while block.isValid() and (block.blockFormat().headingLevel() or block.textList() or not block.text().strip()):
         block = block.next()
     fmt = block.blockFormat()
     assert fmt.lineHeight() == 150
@@ -91,7 +91,8 @@ def test_focus_buttons_bind_ids_continue_and_keep_settings(ui, qtbot):
     ui.pause_focus()
     ui.start_focus_for_task(rows[0]["id"])
     assert ui.focus.running and ui.focus.session_id == session
-    assert ui.store.tasks(pid)[0]["status"] == "未开始"
+    recorded = ui.store.tasks(pid)[0]
+    assert recorded["status"] == ("进行中" if recorded["focus_seconds"] else "未开始")
 
 
 def test_focus_switch_default_cancel_then_commit_once(ui, monkeypatch):
@@ -232,6 +233,8 @@ def test_draft_creation_and_modified_only_on_semantic_change(tmp_path, monkeypat
 
 def make_schema_two(store):
     with closing(sqlite3.connect(store.path)) as c, c:
+        c.execute("DROP TABLE pause_history")
+        c.execute("DROP TABLE plan_schedules")
         c.execute("ALTER TABLE planning_drafts DROP COLUMN created_at")
         c.execute("PRAGMA user_version=2")
 

@@ -6,12 +6,21 @@ from PySide6.QtWidgets import QApplication, QStyle, QStyledItemDelegate
 from desktop.task_status import overdue_days
 
 OVERDUE_ROLE = Qt.ItemDataRole.UserRole + 31
+FOCUS_ROLE = Qt.ItemDataRole.UserRole + 32
+
+
+def focus_tooltip(task):
+    seconds = max(0, int(task.get("focus_seconds", 0)))
+    return f"已专注 {seconds // 3600} 小时 {seconds // 60 % 60} 分 {seconds % 60} 秒\n仅统计专注计时，不含手动补记。" if seconds else "尚未记录专注时长。"
 
 
 def mark_overdue(item, task, columns, today):
     days = overdue_days(task, today)
     for column in range(columns):
         item.setData(column, OVERDUE_ROLE, days)
+    status_column = 5 if columns == 7 else 3
+    item.setToolTip(status_column, focus_tooltip(task))
+    item.setData(status_column, FOCUS_ROLE, task.get("focus_seconds", 0))
     if days:
         item.setToolTip(0, item.toolTip(0) + f"\n逾期 {days} 天 · 原状态：{task['status']}")
 
@@ -20,6 +29,15 @@ class TaskItemDelegate(QStyledItemDelegate):
     def __init__(self, parent=None, status_column=3):
         super().__init__(parent)
         self.status_column = status_column
+
+    def helpEvent(self, event, view, option, index):
+        seconds = index.data(FOCUS_ROLE) or 0
+        if index.column() == self.status_column and seconds:
+            from desktop.focus_tip import focus_tips
+            anchor = QRect(view.viewport().mapToGlobal(option.rect.topLeft()), option.rect.size())
+            focus_tips().show(seconds, event.globalPos(), anchor)
+            return True
+        return super().helpEvent(event, view, option, index)
 
     def initStyleOption(self, option, index):
         super().initStyleOption(option, index)

@@ -42,6 +42,8 @@ def compass_icon(size=128):
 
 
 def apply_theme(app, choice="system"):
+    from desktop.localization import install_chinese_controls
+    install_chinese_controls(app)
     dark = choice == "dark" or (choice == "system" and app.styleHints().colorScheme() == Qt.ColorScheme.Dark)
     colors = DARK if dark else LIGHT
     if not hasattr(app, "_dropdown_style"):
@@ -103,6 +105,10 @@ def apply_theme(app, choice="system"):
         QPushButton#danger {{ color:{colors['danger']}; }}
         QPushButton#danger:hover, QPushButton#danger[hovered="true"] {{ background:{colors['danger_hover']}; border-color:{colors['danger']}; }}
         QPushButton#danger:pressed {{ background:{pressed}; }}
+        QPushButton#planDangerAction {{ color:{colors['danger']}; background:transparent; border:0; text-align:left; padding:10px 12px; border-radius:7px; }}
+        QPushButton#planDangerAction:hover, QPushButton#planDangerAction[hovered="true"] {{ background:{colors['danger_hover']}; color:{colors['danger']}; }}
+        QPushButton#planDangerAction:focus {{ background:{colors['danger_hover']}; border:1px solid {colors['danger']}; }}
+        QPushButton#planDangerAction:disabled {{ color:{muted}; background:transparent; }}
         QPushButton#nav {{ background:transparent; border:1px solid transparent; text-align:left; padding:12px 16px; color:{muted}; }}
         QPushButton#nav:hover, QPushButton#nav[hovered="true"] {{ background:{hover}; color:{ink}; border-color:transparent; }}
         QPushButton#nav:checked {{ background:{card}; color:{accent}; border-color:{line}; font-weight:600; }}
@@ -157,6 +163,12 @@ def apply_theme(app, choice="system"):
         QFrame#weekTask[overdue="true"] {{ background:{colors['overdue_bg']}; border-color:{colors['overdue_line']}; }}
         QFrame#weekTask[overdue="true"]:hover, QFrame#weekTask[overdue="true"][selected="true"], QFrame#weekTask[overdue="true"]:focus {{ border-color:{colors['overdue']}; }}
         QLabel#overdueBadge {{ background:{colors['overdue']}; color:{colors['overdue_text']}; font-size:11px; font-weight:600; padding:3px 7px; border-radius:5px; }}
+        QLabel#budgetWarning {{ background:{colors['overdue_bg']}; color:{colors['overdue']}; padding:8px; border-radius:8px; font-size:13px; }}
+        QFrame#confirmationCard {{ background:{card}; border:1px solid {line}; border-radius:12px; }}
+        QLabel#confirmationSection {{ font-weight:600; }}
+        QLabel#confirmationValue {{ font-size:18px; font-weight:600; }}
+        QLabel#confirmationOver {{ color:{colors['overdue']}; font-size:18px; font-weight:600; }}
+        QLabel#confirmationNote {{ background:{sidebar}; color:{muted}; padding:12px; border-radius:10px; }}
         QLabel#taskStatus {{ color:{muted}; }}
         QLabel#taskStatus[taskState="进行中"] {{ color:{accent}; }}
         QLabel#taskStatus[taskState="已完成"] {{ color:{colors['good']}; }}

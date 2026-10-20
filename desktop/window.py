@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QFileDialog, QF
     QSizePolicy)
 
 from demo_sample import sample_learning_plan
-from desktop import DISPLAY_VERSION
+from desktop import DISPLAY_VERSION, build_label
 from desktop.credentials import CredentialStore
 from desktop.dialogs import ConnectionDialog, PlanDialog, PreviewDialog, TaskDialog, spin, choose_model
 from desktop.focus import FocusTimer
@@ -34,8 +34,13 @@ from desktop.planning_ui import PlanningWindow, ModificationDialog, DraftsDialog
 from desktop.week_view import WeekPanel, attach_focus_button
 from desktop.diagnostics import ConnectionDiagnostic
 from desktop.task_status import display_status
-from desktop.task_style import TaskItemDelegate, mark_overdue
+from desktop.task_style import TaskItemDelegate, mark_overdue, focus_tooltip, FOCUS_ROLE
 from desktop.plan_list import PlanListDelegate, populate_plan_item
+from desktop.schedule_ui import ScheduleDialog, BudgetSettings, budget_action
+from desktop.scheduling import paused
+from desktop.confirmations import DeletePlanDialog
+from desktop.plan_actions import PlanActionsPopup
+from desktop.history_ui import PlanHistoryWindow
 
 
 def label(text, *, name=None, wrap=False):
@@ -104,6 +109,7 @@ class MainWindow(QMainWindow):
     def __init__(self, store, *, credentials=None, enable_tray=True):
         super().__init__()
         self.store = store
+        self.store.expire_pauses()
         self.credentials = credentials or CredentialStore()
         self.focus = FocusTimer(store)
         self.worker = None
@@ -285,6 +291,10 @@ class MainWindow(QMainWindow):
         self.today_plan_filter.currentIndexChanged.connect(self.refresh_today_tasks)
         task_filters.addWidget(self.today_plan_filter)
         layout.addLayout(task_filters)
+        self.today_budget = label("", name="muted", wrap=True)
+        layout.addWidget(self.today_budget)
+        layout.addWidget(horizontal(button("添加任务", self.add_manual_task, True),
+                                    button("安排逾期任务", lambda: self.open_schedule(overdue=True))))
         self.today_empty = label("", name="muted", wrap=True)
         layout.addWidget(self.today_empty)
         self.today_tree = task_tree()
@@ -319,8 +329,15 @@ class MainWindow(QMainWindow):
         right.addWidget(self.plan_title)
         self.plan_summary = label("选择一份计划，继续上次的学习。", name="muted", wrap=True)
         right.addWidget(self.plan_summary)
+        self.plan_more_button = button("更多操作", self.show_plan_menu)
+        self.plan_more_menu = PlanActionsPopup(self)
+        self.delete_plan_action = self.plan_more_menu.delete_action
+        self.delete_plan_action.triggered.connect(self.delete_selected)
         right.addWidget(horizontal(button("重命名", self.rename_selected), button("归档／恢复", self.archive_selected),
-                                   button("导出 JSON", self.export_selected), button("删除", self.delete_selected)))
+                                   button("导出 JSON", self.export_selected), self.plan_more_button))
+        self.pause_plan_button = button("暂停计划", self.pause_selected)
+        right.addWidget(horizontal(button("添加任务到此计划", lambda: self.add_manual_task(self.selected_plan_id)),
+                                   button("调整排期", lambda: self.open_schedule(plan_id=self.selected_plan_id)), self.pause_plan_button))
         self.plan_progress = QProgressBar()
         self.plan_progress.setTextVisible(False)
         right.addWidget(self.plan_progress)
@@ -331,7 +348,7 @@ class MainWindow(QMainWindow):
         self.review_text = label("", name="muted", wrap=True)
         right.addWidget(self.review_text)
         right.addWidget(horizontal(button("记录／编辑任务", lambda: self.edit_tree_task(self.plan_tree.currentItem())),
-                                   button("生成本周复盘", self.review_selected, True), button("撤销最近调整", self.undo_selected)))
+                                   button("生成本周复盘", self.review_selected, True), button("调整历史与回溯", self.undo_selected)))
         columns.addLayout(right, 1)
         layout.addLayout(columns, 1)
         self.stack.addWidget(page)
@@ -346,8 +363,8 @@ class MainWindow(QMainWindow):
         button_icon(following, "right")
         self.week_heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(horizontal(previous, self.week_heading,
-                                   button("本周", lambda: self.change_week(0)), following))
-        self.week_panel = WeekPanel(self.store, self.start_focus_for_task, self.edit_task_id)
+                                   button("本周", lambda: self.change_week(0)), following, button("添加任务", self.add_manual_task)))
+        self.week_panel = WeekPanel(self.store, self.start_focus_for_task, self.edit_task_id, jump=self.jump_week)
         self.week_tree = self.week_panel.table
         layout.addWidget(self.week_panel, 1)
         self.stack.addWidget(page)
@@ -425,8 +442,14 @@ class MainWindow(QMainWindow):
         self.reminders_paused.toggled.connect(lambda value: self.store.set_setting("reminders_paused", value))
         general_layout.addWidget(self.reminders_paused)
         general_layout.addStretch()
-        general_layout.addWidget(label(f"学习罗盘 {DISPLAY_VERSION}\n模型请求仅发送到你配置的服务商。离线时仍可管理计划、记录进度和专注。", name="muted", wrap=True))
+        general_layout.addWidget(label(f"学习罗盘 {DISPLAY_VERSION} · {build_label()}\n模型请求仅发送到你配置的服务商。离线时仍可管理计划、记录进度和专注。", name="muted", wrap=True))
         tabs.addTab(general, "外观与提醒")
+        self.budget_settings = BudgetSettings(self.store, self.refresh, self)
+        budget_scroll = QScrollArea()
+        budget_scroll.setWidgetResizable(True)
+        budget_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        budget_scroll.setWidget(self.budget_settings)
+        tabs.addTab(budget_scroll, "学习时间预算")
         data, data_layout = page_layout()
         data_layout.setContentsMargins(0, 28, 0, 0)
         data_layout.addWidget(label("把学习记录留在自己手里", name="brand"))
@@ -474,7 +497,7 @@ class MainWindow(QMainWindow):
 
     def safe(self, operation):
         try:
-            return operation()
+            return budget_action(self, self.store, operation)
         except (ValueError, OSError) as error:
             QMessageBox.warning(self, "操作未完成", str(error))
         except Exception:
@@ -509,11 +532,17 @@ class MainWindow(QMainWindow):
 
     def refresh_today(self):
         today = date.today()
-        rows = [t for t in self.store.tasks() if not t["archived"]]
+        rows = [t for t in self.store.tasks() if not t["archived"] and not t.get("paused")]
         today_rows = [t for t in rows if t["due_date"] == today.isoformat()]
         completed = sum(t["status"] == "已完成" for t in today_rows)
         overdue = sum(t["due_date"] < today.isoformat() and t["status"] != "已完成" for t in rows)
         self.today_summary.setText(f"{today:%Y年%m月%d日}  ·  今日 {len(today_rows)} 项 / 已完成 {completed} 项  ·  待安排的逾期任务 {overdue} 项")
+        from desktop.schedule_ui import load_text, set_load_label
+        load = self.store.capacity().get(today.isoformat())
+        limits = self.store.setting("daily_budget", [None] * 7)
+        budget_text = load_text(load, today, limits)
+        set_load_label(self.today_budget, budget_text.partition("；")[0], bool(load and load["over"]))
+        self.today_budget.setToolTip(budget_text)
         monday = today - timedelta(days=today.weekday())
         for i, (heading, count, bar) in enumerate(self.trail_days):
             day = monday + timedelta(days=i)
@@ -534,6 +563,8 @@ class MainWindow(QMainWindow):
         self.today_plan_filter.blockSignals(True)
         self.today_plan_filter.clear()
         self.today_plan_filter.addItem("全部任务", None)
+        if self.store.tasks("__standalone__"):
+            self.today_plan_filter.addItem("独立任务", "__standalone__")
         for plan in self.store.list_plans():
             self.today_plan_filter.addItem(plan["title"], plan["id"])
             self.today_plan_filter.setItemData(self.today_plan_filter.count() - 1,
@@ -563,7 +594,8 @@ class MainWindow(QMainWindow):
         for task in rows:
             item = QTreeWidgetItem([task["task"].title, task["due_date"], f"{task['task'].duration_minutes} 分钟", display_status(task, date.today()), ""])
             item.setData(0, Qt.ItemDataRole.UserRole, task["id"])
-            item.setToolTip(0, f"{task['plan_title']} · 第{task['week']}周第{task['day']}天\n{task['task'].description}\n产出：{task['task'].deliverable}")
+            slot = "手动添加" if task.get("manual") else f"第{task['week']}周第{task['day']}天"
+            item.setToolTip(0, f"{task['plan_title']} · {slot}\n{task['task'].description}\n产出：{task['task'].deliverable}")
             mark_overdue(item, task, 5, date.today())
             tree.addTopLevelItem(item)
             attach_focus_button(tree, item, 4, task, self.start_focus_for_task)
@@ -597,19 +629,48 @@ class MainWindow(QMainWindow):
             return
         self.selected_plan_id = item.data(Qt.ItemDataRole.UserRole)
         saved = self.store.get_plan(self.selected_plan_id)
+        self.pause_plan_button.setText("恢复学习" if paused(saved["schedule"]) else "暂停计划")
         profile = saved["profile"]
         self.plan_title.setText(saved["title"])
         self.plan_summary.setText(f"{profile.subject} · {profile.plan_weeks} 周 · 单日上限 {profile.minutes_per_day} 分钟\n{saved['overview']}")
+        if paused(saved["schedule"]):
+            self.plan_summary.setText(self.plan_summary.text() + f"\n已暂停 · {saved['schedule']['resume_date']} 当天恢复")
+        self.plan_summary.setText(self.plan_summary.text() + f"\n实际排期：{saved['start_date']} — {saved['schedule']['end_date']}（学习内容周次不变）")
         done = sum(t["status"] == "已完成" for t in saved["tasks"])
         self.plan_progress.setValue(round(done / len(saved["tasks"]) * 100))
         self.plan_progress.setFormat(f"已完成 {done}/{len(saved['tasks'])} 项")
-        self.fill_tasks(self.plan_tree, sorted(saved["tasks"], key=lambda t: (t["week"], t["day"])))
+        self.fill_tasks(self.plan_tree, sorted(saved["tasks"], key=lambda t: (t["due_date"], t["week"], t["day"] or 0)))
         reviews = self.store.reviews(self.selected_plan_id)
         self.review_text.setText("\n".join(reviews.values()) if reviews else "每周把任务标记为已完成或延期后，生成复盘并调整后续安排。")
 
     def change_week(self, direction):
         self.week_offset = self.week_offset + direction if direction else 0
         self.refresh_week()
+
+    def jump_week(self, day):
+        today = date.today()
+        self.week_offset = ((day - timedelta(days=day.weekday())) - (today - timedelta(days=today.weekday()))).days // 7
+        self.refresh_week()
+
+    def open_schedule(self, *, plan_id=None, overdue=False, kind="补排"):
+        def action():
+            if self.worker:
+                raise ValueError("请先等待或取消当前模型请求，再调整排期")
+            if kind == "暂停" and self.focus.task_id in {r["id"] for r in self.store.tasks(plan_id)} and (self.focus.session_id or self.focus.phase == "break"):
+                answer = QMessageBox.question(self, "暂停计划前保存专注", "结束关联任务的专注或休息并保存用时，再查看暂停预览？",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Cancel)
+                if answer != QMessageBox.StandardButton.Yes:
+                    return
+                self.focus.stop()
+            dialog = ScheduleDialog(self.store, self, plan_id=plan_id, overdue=overdue, kind=kind)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self.refresh()
+                self.notice.setText("排期已保存，任务内容和学习记录保持不变。可在需求与历史中查看。")
+        self.safe(action)
+
+    def pause_selected(self):
+        if self.selected_plan_id:
+            self.open_schedule(plan_id=self.selected_plan_id, kind="恢复" if paused(self.store.schedule(self.selected_plan_id)) else "暂停")
 
     def refresh_week(self):
         today = date.today()
@@ -806,12 +867,47 @@ class MainWindow(QMainWindow):
         if not row:
             return
         dialog = TaskDialog(row, locked=row["week"] in self.store.reviews(row["plan_id"]), parent=self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
+        result = dialog.exec()
+        if result == 2 and row.get("manual"):
+            answer = QMessageBox.question(self, "删除手动任务", "删除这项任务及其专注、笔记和提醒记录？删除前的每日备份仍会保留。",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Cancel)
+            if answer == QMessageBox.StandardButton.Yes:
+                self.safe(lambda: self.store.delete_manual_task(task_id))
+                self.refresh()
+        elif result == QDialog.DialogCode.Accepted:
             def save():
-                self.store.update_task(**dialog.values())
+                self.store.update_task(**dialog.values(), confirm_limits=True)
                 self.refresh()
                 self.notice.setText("任务与学习记录已保存。")
             self.safe(save)
+
+    def add_manual_task(self, plan_id=None):
+        from desktop.manual_tasks import ManualTaskDialog
+        dialog = ManualTaskDialog(self.store, self, plan_id=plan_id)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.refresh()
+            self.notice.setText("任务已添加。今日页显示今天和逾期任务；未来任务可在周视图查看。")
+
+    def refresh_focus_status(self):
+        """Update live labels without rebuilding tables or losing selections."""
+        rows = {r["id"]: r for r in self.store.tasks()}
+        for tree, column in ((self.today_tree, 3), (self.plan_tree, 3), (self.week_tree, 5)):
+            for i in range(tree.topLevelItemCount()):
+                item = tree.topLevelItem(i)
+                row = rows.get(item.data(0, Qt.ItemDataRole.UserRole))
+                if row:
+                    item.setText(column, display_status(row, date.today()))
+                    item.setToolTip(column, focus_tooltip(row))
+                    item.setData(column, FOCUS_ROLE, row["focus_seconds"])
+        for card in self.week_panel.cards:
+            row = rows.get(card.task_id)
+            if row:
+                card.status.setText(display_status(row, date.today()))
+                from desktop.focus_tip import set_focus_hint
+                set_focus_hint(card.status, row)
+                card.status.setProperty("taskState", card.status.text())
+                card.status.style().unpolish(card.status)
+                card.status.style().polish(card.status)
 
     def rename_selected(self):
         if not self.selected_plan_id:
@@ -824,19 +920,34 @@ class MainWindow(QMainWindow):
 
     def archive_selected(self):
         if self.selected_plan_id:
-            self.store.archive(self.selected_plan_id, not self.archived.isChecked())
+            self.safe(lambda: self.store.archive(self.selected_plan_id, not self.archived.isChecked()))
             self.refresh()
+
+    def show_plan_menu(self):
+        self.delete_plan_action.setEnabled(bool(self.selected_plan_id))
+        self.plan_more_menu.popup(self.plan_more_button.mapToGlobal(self.plan_more_button.rect().bottomLeft()))
 
     def delete_selected(self):
         if not self.selected_plan_id:
             return
-        if QMessageBox.question(self, "删除计划", "删除这份计划及其学习记录？已生成的每日备份仍会保留。") != QMessageBox.StandardButton.Yes:
-            return
-        if self.focus.task_id in {t["id"] for t in self.store.tasks(self.selected_plan_id)}:
-            self.focus.stop()
-        self.store.delete_plan(self.selected_plan_id)
-        self.selected_plan_id = None
-        self.refresh()
+        plan_id = self.selected_plan_id
+        def remove():
+            saved = self.store.get_plan(plan_id)
+            reason = ""
+            if self.worker:
+                reason = "请先完成或取消当前模型请求，再删除计划。"
+            elif self.focus.task_id in {t["id"] for t in saved["tasks"]} and (self.focus.session_id or self.focus.phase == "break"):
+                reason = "请先到专注页结束这份计划关联的专注或休息，再删除计划。"
+            dialog = DeletePlanDialog(saved["title"], len(saved["tasks"]),
+                sum(t["status"] == "已完成" for t in saved["tasks"]), self, blocking_reason=reason)
+            if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.confirmed:
+                return
+            backup = self.store.delete_plan(plan_id, expected_revision=saved["revision"])
+            if self.selected_plan_id == plan_id:
+                self.selected_plan_id = None
+            self.refresh()
+            self.notice.setText(f"计划已删除，其他计划未受影响。删除前备份：{backup.name}")
+        self.safe(remove)
 
     def review_selected(self):
         if not self.selected_plan_id:
@@ -858,8 +969,16 @@ class MainWindow(QMainWindow):
 
     def undo_selected(self):
         if self.selected_plan_id:
-            self.safe(lambda: self.store.undo_latest(self.selected_plan_id))
-            self.refresh()
+            def show():
+                previous = getattr(self, "history_replay_window", None)
+                if previous and previous.isVisible() and previous.plan_id == self.selected_plan_id:
+                    previous.showNormal()
+                    previous.raise_()
+                    previous.activateWindow()
+                    return
+                self.history_replay_window = PlanHistoryWindow(self, self.selected_plan_id)
+                self.history_replay_window.show()
+            self.safe(show)
 
     def export_selected(self):
         if not self.selected_plan_id:
@@ -877,10 +996,10 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(self, "导入计划", "", "计划文件 (*.json)")
         if not path:
             return
+        start = self.import_start()
         def action():
-            start = self.import_start()
             if start:
-                self.selected_plan_id = self.store.import_plan(Path(path).read_bytes(), start)
+                self.selected_plan_id = self.store.import_plan(Path(path).read_bytes(), start, confirm_limits=True)
                 self.archived.setChecked(False)
                 self.search.clear()
                 self.refresh()
@@ -918,6 +1037,7 @@ class MainWindow(QMainWindow):
                 raise ValueError("请先结束当前模型请求再恢复数据。")
             self.focus.pause()
             self.store.restore(Path(path))
+            self.budget_settings.reload()
             self.focus = FocusTimer(self.store)
             self.selected_plan_id = None
             self.refresh()
@@ -993,7 +1113,7 @@ class MainWindow(QMainWindow):
         self.focus_task.clear()
         self.focus_task.addItem("不关联任务，只记录专注", None)
         for row in self.store.tasks():
-            if not row["archived"] and (row["status"] != "已完成" or row["id"] == selected):
+            if not row["archived"] and not row.get("paused") and (row["status"] != "已完成" or row["id"] == selected):
                 self.focus_task.addItem(f"{row['task'].title} · {row['plan_title']}", row["id"])
         index = self.focus_task.findData(selected)
         self.focus_task.setCurrentIndex(max(0, index))
@@ -1008,7 +1128,7 @@ class MainWindow(QMainWindow):
     def start_focus_for_task(self, task_id):
         def action():
             row = next((t for t in self.store.tasks() if t["id"] == task_id), None)
-            if not row or row["archived"] or row["status"] == "已完成":
+            if not row or row["archived"] or row.get("paused") or row["status"] == "已完成":
                 raise ValueError("这项任务已完成、归档或删除，请刷新任务列表。")
             same = self.focus.phase == "focus" and self.focus.task_id == task_id and self.focus.session_id is not None
             if not same and (self.focus.session_id or self.focus.phase == "break"):
@@ -1029,19 +1149,25 @@ class MainWindow(QMainWindow):
     def pause_focus(self):
         self.focus.pause()
         self.tick()
+        self.refresh_focus_status()
 
     def stop_focus(self):
         self.focus.stop()
         self.tick()
         self.refresh_today()
+        self.refresh_focus_status()
 
     def tick(self):
         if self.display_date != date.today():
             self.display_date = date.today()
+            self.store.expire_pauses()
             self.refresh_today()
             self.refresh_library()
             self.refresh_week()
+        committed = self.focus.last_commit
         event = self.focus.tick()
+        if committed != self.focus.last_commit:
+            self.refresh_focus_status()
         seconds = max(0, math.ceil(self.focus.remaining))
         self.timer_label.setText(f"{seconds // 60:02d}:{seconds % 60:02d}")
         self.focus_label.setText(("专注" if self.focus.phase == "focus" else "休息") + (" · 进行中" if self.focus.running else " · 已暂停"))

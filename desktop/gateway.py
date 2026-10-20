@@ -295,11 +295,14 @@ class ModelGateway:
         from desktop.planning import RevisionProposal, validate_proposal
         system = """你是中文学习计划编辑。只输出规定JSON。仅修改target_ids中的任务，不增删学习日，不改变task.day。
         保留原目标、周期、每周学习日和每日可用上限；大改需用户创建副本，不能擅自改变硬约束。
-        任务说明可细化为操作步骤。修改的日期仅能是原周期内的可用学习日。
+        任务说明可细化为操作步骤。修改日期只能在上下文schedule给出的当前有效日历排期内，
+        使用计划选定的学习日，并避开pause_start至resume_date之前的暂停区间。
+        逻辑学习周数与任务编号不能因为实际日历排期延长而增加。
         reserved是不可改任务占用的时间，必须一起计算日/周上限；不能静默丢任务或假装完成。
         提供逐项reason和整体summary；changes只列确实需要修改的任务。所有文字简体中文。"""
         prompt = json.dumps(dict(requirements=draft.context(), confirmed_outline=draft.outline.model_dump(),
-                                 start_date=saved["start_date"], weekdays=json.loads(saved["weekdays_json"])), ensure_ascii=False)
+                                 start_date=saved["start_date"], weekdays=json.loads(saved["weekdays_json"]),
+                                 schedule=saved.get("schedule")), ensure_ascii=False)
         return self.structured(RevisionProposal, system, prompt, "planning_revision",
                                validate=lambda proposal: validate_proposal(saved, proposal, draft.target_ids, reviewed_weeks),
                                cancelled=cancelled)

@@ -41,6 +41,8 @@ def main():
         subprocess.run(command, env=environment, cwd=directory, timeout=90, check=True)
         first = json.loads((data / "smoke-result.json").read_text(encoding="utf-8"))
         assert first["success"] and first["version"] == VERSION and first["pages"] == 5 and first["tasks"] == 6
+        assert first["plan_deletion"]["success"]
+        assert first["plan_history"]["success"]
         store = Store(data)
         row = store.tasks()[0]
         store.update_task(row["id"], row["task"], row["due_date"], row["remind_at"], "已完成", 12, 2, "冻结程序重启验证")
@@ -64,6 +66,8 @@ def main():
         report = dict(version=first["version"], frozen_start=True, external_python_removed=True,
                       restart_preserved=True, single_instance=True, credential_store=first.get("credential_store"),
                       offline_guide_packaged=True, clean_windows_vm=False)
+        report["plan_deletion"] = first["plan_deletion"]
+        report["plan_history"] = first["plan_history"]
         if args.input_scope:
             assert first['input_scope']['success']
             report['input_scope'] = first['input_scope']
@@ -77,6 +81,12 @@ def main():
                            env=native_environment, cwd=directory, timeout=120, check=True)
             native_report = json.loads((native / "smoke-result.json").read_text(encoding="utf-8"))
             report["native_guide_window"] = native_report["native_guide_window"]
+            report["modal_guide"] = native_report["modal_guide"]
+            report["guide_lifecycle"] = native_report["guide_lifecycle"]
+            assert native_report["plan_deletion"]["success"]
+            report["native_plan_deletion"] = native_report["plan_deletion"]
+            assert native_report["plan_history"]["success"]
+            report["native_plan_history"] = native_report["plan_history"]
             if args.input_scope:
                 assert native_report['input_scope']['success']
                 report['native_input_scope'] = native_report['input_scope']

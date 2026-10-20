@@ -46,4 +46,4 @@ def test_focus_completion_and_break_do_not_mark_task_completed(tmp_path):
         clock[0] += 5
         timer.tick()
     assert store.tasks(pid)[0]["focus_seconds"] == 60
-    assert store.tasks(pid)[0]["status"] == "未开始"
+    assert store.tasks(pid)[0]["status"] == "进行中"

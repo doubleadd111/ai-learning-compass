@@ -268,6 +268,10 @@ class PlanningDraft(StrictModel):
 
 
 def protection_reason(task, reviewed_weeks=()):
+    if task.get("manual"):
+        return "手动任务仅由你修改，不参与 AI 调整"
+    if task.get("focus_active"):
+        return "任务已开始或完成"
     if task["week"] in reviewed_weeks:
         return "该周已复盘"
     if task["status"] not in {"未开始", "延期"}:
@@ -287,7 +291,7 @@ def modification_context(saved, target_ids, reviewed_weeks):
     editable = [row for row in targets if row not in blocked]
     if not editable:
         raise ValueError("范围内没有可修改任务；已有记录不能覆盖，未开始的锁定任务可先明确解锁")
-    return dict(target_ids=[t["id"] for t in editable], protected_count=len(blocked),
+    return dict(target_ids=[t["id"] for t in editable], protected_count=len(blocked), schedule=saved.get("schedule"),
                 tasks=[dict(task_id=t["id"], task=t["task"].model_dump(), due_date=t["due_date"]) for t in editable],
                 reserved=[dict(due_date=t["due_date"], duration_minutes=t["task"].duration_minutes)
                           for t in saved["tasks"] if t not in editable])
@@ -299,7 +303,7 @@ def validate_proposal(saved, proposal, target_ids, reviewed_weeks):
         raise ValueError("修改越出所选范围或重复修改同一任务")
     rows = {t["id"]: t for t in saved["tasks"]}
     start = date.fromisoformat(saved["start_date"])
-    end = start + timedelta(days=saved["profile"].plan_weeks * 7)
+    end = date.fromisoformat(saved["schedule"]["end_date"]) + timedelta(days=1) if saved.get("schedule") else start + timedelta(days=saved["profile"].plan_weeks * 7)
     weekdays = json.loads(saved["weekdays_json"])
     candidate = {t["id"]: (t["task"], t["due_date"]) for t in saved["tasks"]}
     for change in proposal.changes:
@@ -311,7 +315,10 @@ def validate_proposal(saved, proposal, target_ids, reviewed_weeks):
         if change.task.duration_minutes > saved["profile"].minutes_per_day:
             raise ValueError("任务超过单日上限")
         if change.due_date.isoformat() != row["due_date"] and not (start <= change.due_date < end and change.due_date.weekday() in weekdays):
-            raise ValueError("改期必须在原周期的可用学习日内；请减内容或创建延长周期副本")
+            raise ValueError("改期必须在当前有效排期的可用学习日内；可先使用本地调整排期延长周期")
+        schedule = saved.get("schedule", {})
+        if change.due_date.isoformat() != row["due_date"] and schedule.get("pause_start") and schedule["pause_start"] <= change.due_date.isoformat() < schedule["resume_date"]:
+            raise ValueError("不能将任务安排到计划暂停期间")
         candidate[change.task_id] = (change.task, change.due_date.isoformat())
     daily, weekly = {}, {}
     for task, due in candidate.values():

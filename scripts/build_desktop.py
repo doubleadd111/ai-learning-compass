@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import zipfile
+from datetime import datetime
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -70,11 +71,15 @@ def main():
     shutil.copy2(ROOT / "docs" / "desktop-guide.md", ROOT / "dist" / "LearningCompass" / "使用说明.md")
     shutil.copy2(ROOT / "THIRD_PARTY_NOTICES.md", ROOT / "dist" / "LearningCompass" / "THIRD_PARTY_NOTICES.md")
     shutil.copy2(ROOT / "CHANGELOG.md", ROOT / "dist" / "LearningCompass" / "更新日志.md")
+    built_at = datetime.now().astimezone().isoformat(timespec="minutes")
+    (ROOT / "dist" / "LearningCompass" / "build-info.json").write_text(json.dumps(
+        dict(version=VERSION, kind="local-test" if args.local_test else "release", built_at=built_at),
+        ensure_ascii=False, indent=2), encoding="utf-8")
     if args.local_test:
         if source_digest() != source_hash:
             raise RuntimeError("构建期间源码发生变化，请重新构建本机测试程序。")
         executable = ROOT / "dist" / "LearningCompass" / "LearningCompass.exe"
-        manifest = {"version": VERSION, "kind": "local-test", "source_sha256": source_hash,
+        manifest = {"version": VERSION, "kind": "local-test", "source_sha256": source_hash, "built_at": built_at,
                     "exe_sha256": hashlib.sha256(executable.read_bytes()).hexdigest(), "dependencies": installed}
         (ROOT / "build" / "local-test-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"Local test build complete (no installer or portable ZIP): {executable.parent}")

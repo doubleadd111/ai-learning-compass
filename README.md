@@ -1,10 +1,10 @@
 # 学习罗盘 2026.10
 
-当前公开试用版本为 **2026.10.10**。修复计划库长名称／长科目撑宽列表的问题，完成数独立显示，悬停可看全文；新生成建议使用短名称，已有内容不被截断保存。本版同时汇总使用指南、需求澄清、受控修改、直观周历、逾期标识及2026.10.1–9的修复。[详细发布说明](docs/releases/2026.10.10.md) · [完整更新日志](CHANGELOG.md)。
+当前公开试用版本为 **2026.10.11**。新增单项／批量改期、计划暂停、跨计划时间预算、计划内及独立手动任务、近七天调整历史与回溯；加强删除保护，修复指南关闭后打不开和弹窗风格问题。本轮累计功能已由用户完成本机体验验收。[详细发布说明](docs/releases/2026.10.11.md) · [完整更新日志](CHANGELOG.md)。
 
 中文 Windows 桌面学习计划软件：使用自己的 DeepSeek／OpenAI 兼容模型生成通用学习计划，记录进度、每周复盘，提供本机长期保存、备份、托盘提醒与专注计时。
 
-**桌面版下载：**[2026.10.10 公开试用版](https://github.com/doubleadd111/ai-learning-compass/releases/tag/2026.10.10) · [桌面版使用指南](docs/desktop-guide.md) · [验收记录](docs/desktop-verification.md)。安装后无需 Python 或 PowerShell。源码入口为 `run_desktop.py`，依赖使用 `requirements-desktop.txt`。
+**桌面版下载：**[2026.10.11 公开试用版](https://github.com/doubleadd111/ai-learning-compass/releases/tag/2026.10.11) · [桌面版使用指南](docs/desktop-guide.md) · [验收记录](docs/desktop-verification.md)。安装后无需 Python 或 PowerShell。源码入口为 `run_desktop.py`，依赖使用 `requirements-desktop.txt`。
 
 桌面版数据固定保存到 `%LOCALAPPDATA%\LearningCompass`，密钥交给 Windows 凭据管理器。软件卸载或升级会保留数据；备份不包含 API Key。
 

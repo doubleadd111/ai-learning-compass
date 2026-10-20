@@ -122,14 +122,14 @@ class PlanningWindow(QDialog):
         self.quick = QCheckBox("快速生成：跳过追问，仍先确认概略")
         self.quick.setChecked(self.draft.quick)
         box.addWidget(self.quick)
-        self.request = QPlainTextEdit(self.draft.request)
+        self.request = QPlainTextEdit(self.draft.request, page)
         self.request.setPlaceholderText("例如：只把第二周的练习变简单，日期和其他任务不变")
         self.request.setMaximumHeight(100)
         self.request.setVisible(self.draft.kind == "modify")
         if self.draft.kind == "modify":
             box.addWidget(note(f"已选 {len(self.draft.target_ids)} 项可编辑任务；受保护任务不会交给模型改写。"))
             box.addWidget(self.request)
-        self.archive = QCheckBox("保存新计划时，同时归档旧计划（保留记录）")
+        self.archive = QCheckBox("保存新计划时，同时归档旧计划（保留记录）", page)
         self.archive.setChecked(self.draft.archive_parent)
         self.archive.setVisible(bool(self.draft.parent_plan_id))
         box.addWidget(self.archive)
@@ -591,4 +591,4 @@ class HistoryWindow(QDialog):
                 html += f"<p>{escape(row['due_date'])} · {escape(task['title'])} / {task['duration_minutes']}分钟<br>{escape(task['description'])}</p>"
         browser.setHtml(html)
         layout.addWidget(browser)
-        layout.addWidget(note("历史只读；有新记录后不能直接覆盖恢复。返回计划库可撤销最近一次未过期的AI调整。"))
+        layout.addWidget(note("此处为完整只读资料。需要回溯时，返回计划库点击“调整历史与回溯”，可选择最近7天的状态；当前学习记录保留。"))

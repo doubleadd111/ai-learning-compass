@@ -12,6 +12,9 @@ from desktop.dialogs import ConnectionDialog, PlanDialog, TaskDialog, ModelSelec
 from desktop.models import ModelConnection
 from desktop.planning import ClarificationQuestion, PlanningDraft, PlanningTurn
 from desktop.planning_ui import ModificationDialog, PlanningWindow
+from desktop.schedule_ui import ScheduleDialog
+from desktop.manual_tasks import ManualTaskDialog
+from desktop.history_ui import PlanHistoryWindow
 
 
 def check_input_controls(window):
@@ -21,6 +24,10 @@ def check_input_controls(window):
              TaskDialog(saved['tasks'][0], parent=window),
              ModificationDialog(saved, [saved['tasks'][0]['id']], window),
              ModelSelectionDialog(['mock-one', 'mock-two'], window)]
+    forms.append(ScheduleDialog(window.store, window, plan_id=saved['id']))
+    forms.append(ScheduleDialog(window.store, window, plan_id=saved['id'], kind='暂停'))
+    forms.append(ManualTaskDialog(window.store, window))
+    forms.append(PlanHistoryWindow(window, saved['id']))
     draft = PlanningDraft(profile=saved['profile'], start_date=date.fromisoformat(saved['start_date']),
                           weekdays=json.loads(saved['weekdays_json']), connection=config)
     flow = PlanningWindow(window, draft)

@@ -41,6 +41,11 @@ class FocusTimer:
             self.remaining = (self.focus_minutes if self.phase == "focus" else self.break_minutes) * 60
 
     def start(self, task_id=None):
+        target = self.task_id if self.session_id or self.phase == "break" else task_id
+        if target:
+            row = next((r for r in self.store.tasks() if r["id"] == target), None)
+            if not row or row["archived"] or row.get("paused"):
+                raise ValueError("关联计划已暂停、归档或任务不存在，请先恢复计划")
         if self.running:
             return
         if self.phase == "focus" and not self.session_id:

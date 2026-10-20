@@ -1,4 +1,4 @@
-#define AppVersion "2026.10.10"
+#define AppVersion "2026.10.11"
 #define AppName "学习罗盘"
 
 [Setup]
@@ -35,7 +35,7 @@ CloseApplications=yes
 InfoAfterFile=..\docs\installer-note.txt
 
 [Tasks]
-Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
+Name: "desktopicon"; Description: "创建桌面快捷方式"; Flags: unchecked
 
 [Files]
 Source: "..\dist\LearningCompass\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -47,4 +47,4 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\LearningCompass.exe"; Tasks: 
 #endif
 
 [Run]
-Filename: "{app}\LearningCompass.exe"; Description: "Open Learning Compass"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\LearningCompass.exe"; Description: "打开学习罗盘"; Flags: nowait postinstall skipifsilent

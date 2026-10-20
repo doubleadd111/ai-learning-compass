@@ -103,6 +103,18 @@ def test_pages_fit_supported_sizes_and_theme_switch_keeps_navigation(qtbot, tmp_
                 if parent is not None and parent.widget().isAncestorOf(control):
                     parent.ensureWidgetVisible(control, 0, 0)
                     app.processEvents()
+                # Index-widget buttons are visible Qt children even when their
+                # table rows are clipped. Verify reachability after real scrolling.
+                from PySide6.QtWidgets import QTreeWidget
+                table = control.parentWidget()
+                while table is not None and not isinstance(table, QTreeWidget):
+                    table = table.parentWidget()
+                if table is not None:
+                    for row in range(table.topLevelItemCount()):
+                        item = table.topLevelItem(row)
+                        if any(table.itemWidget(item, col) is control for col in range(table.columnCount())):
+                            table.scrollToItem(item)
+                            app.processEvents()
                 corner = control.mapTo(window, control.rect().bottomRight())
                 assert 0 <= corner.x() < window.width(), control.text()
                 assert 0 <= corner.y() < window.height(), control.text()

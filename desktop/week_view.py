@@ -10,7 +10,8 @@ from PySide6.QtWidgets import (QApplication, QFrame, QGridLayout, QHBoxLayout, Q
 from desktop.models import DesktopProfile
 from desktop.controls import SoftComboBox as QComboBox
 from desktop.task_status import overdue_days, display_status, matches_status
-from desktop.task_style import TaskItemDelegate, mark_overdue
+from desktop.task_style import TaskItemDelegate, mark_overdue, focus_tooltip
+from desktop.focus_tip import set_focus_hint
 
 
 def text(value, muted=False):
@@ -28,7 +29,9 @@ def focus_button(row, callback):
     button.setMaximumWidth(104)
     button.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
     button.setAccessibleName(f"开始专注：{row['task'].title}")
-    button.setEnabled(not row["archived"] and row["status"] != "已完成")
+    button.setEnabled(not row["archived"] and not row.get("paused") and row["status"] != "已完成")
+    if row.get("paused"):
+        button.setText("计划已暂停")
     button.clicked.connect(lambda _checked=False, task_id=row["id"]: callback(task_id))
     return button
 
@@ -69,7 +72,9 @@ class TaskCard(QFrame):
         plan_title = row["plan_title"]
         layout.addWidget(text(plan_title[:20] + ("…" if len(plan_title) > 20 else ""), True))
         layout.addWidget(text(f"{row['task'].duration_minutes} 分钟", True))
-        layout.addWidget(status_label(row["status"]))
+        self.status = status_label(display_status(row, today))
+        set_focus_hint(self.status, row)
+        layout.addWidget(self.status)
         layout.addWidget(focus_button(row, focus))
         self.setToolTip(f"{title}\n{row['task'].description}\n产出：{row['task'].deliverable}")
 
@@ -91,9 +96,10 @@ class TaskCard(QFrame):
 
 
 class WeekPanel(QWidget):
-    def __init__(self, store, start_focus, edit_task, parent=None):
+    def __init__(self, store, start_focus, edit_task, parent=None, *, jump=None):
         super().__init__(parent)
         self.store, self.start_focus, self.edit_task = store, start_focus, edit_task
+        self.jump = jump or (lambda day: self.refresh(day - timedelta(days=day.weekday())))
         self.start = date.today() - timedelta(days=date.today().weekday())
         self.selected_id = None
         self.rows, self.cards = [], []
@@ -121,6 +127,17 @@ class WeekPanel(QWidget):
         layout.addLayout(filters)
         self.summary = text("", True)
         layout.addWidget(self.summary)
+        self.context = text("", True)
+        layout.addWidget(self.context)
+        self.budget_summary = text("", True)
+        layout.addWidget(self.budget_summary)
+        navigation = QHBoxLayout()
+        for name, action in (("跳到计划首周", self.first_week), ("跳到下一项未完成任务", self.next_task), ("清除筛选", self.clear_filters)):
+            b = QPushButton(name)
+            b.clicked.connect(action)
+            navigation.addWidget(b)
+        navigation.addStretch()
+        layout.addLayout(navigation)
         self.views = QStackedWidget()
         self.calendar = QScrollArea()
         self.calendar.setWidgetResizable(True)
@@ -169,7 +186,8 @@ class WeekPanel(QWidget):
             self.start = start
         plans = self.store.list_plans()
         self.subjects = {p["id"]: DesktopProfile.model_validate_json(p["profile_json"]).subject for p in plans}
-        self.fill_filter(self.plan_filter, [(p["title"], p["id"]) for p in plans], "全部计划")
+        self.subjects[None] = "独立任务"
+        self.fill_filter(self.plan_filter, [("独立任务", "__standalone__"), *[(p["title"], p["id"]) for p in plans]], "全部计划")
         self.fill_filter(self.subject_filter, [(s, s) for s in sorted(set(self.subjects.values()))], "全部科目")
         self.all_rows = [t for t in self.store.tasks() if not t["archived"] and self.start.isoformat() <= t["due_date"] <= (self.start + timedelta(days=6)).isoformat()]
         self.render()
@@ -179,13 +197,24 @@ class WeekPanel(QWidget):
             return
         plan, subject, status = self.plan_filter.currentData(), self.subject_filter.currentData(), self.status_filter.currentText()
         today = date.today()
-        self.rows = [r for r in self.all_rows if (not plan or r["plan_id"] == plan) and
+        self.rows = [r for r in self.all_rows if (not plan or r["plan_id"] == plan or plan == "__standalone__" and r["plan_id"] is None) and
                      (not subject or self.subjects[r["plan_id"]] == subject) and matches_status(r, status, today)]
         done = sum(r["status"] == "已完成" for r in self.rows)
         expected = sum(r["task"].duration_minutes for r in self.rows)
         actual = sum(r["manual_seconds"] + r["focus_seconds"] for r in self.rows) // 60
         late = sum(overdue_days(r, today) > 0 for r in self.rows)
         self.summary.setText(f"筛选后：{len(self.rows)} 项 · 已完成 {done} 项 · 逾期 {late} 项 · 预计 {expected} 分钟 · 任务累计实际 {actual} 分钟（按本周排期归属）")
+        self.render_context(plan, subject, status)
+        loads = self.store.capacity()
+        limits = self.store.setting("daily_budget", [None] * 7)
+        from desktop.schedule_ui import load_text, set_load_label
+        week_days = [self.start + timedelta(days=i) for i in range(7)]
+        available = [d for d in week_days if limits[d.weekday()] is not None]
+        set_load_label(self.budget_summary, "全部活动计划与独立任务预计／预算：" + " · ".join(
+            f"周{'一二三四五六日'[d.weekday()]} {loads.get(d.isoformat(), {}).get('total', 0)}/{limits[d.weekday()]}分" for d in available),
+            any(loads.get(d.isoformat(), {}).get("over") for d in available))
+        self.budget_summary.setToolTip("\n".join(load_text(loads.get(d.isoformat()), d, limits) for d in week_days))
+        self.budget_summary.setVisible(bool(available))
         self.table.blockSignals(True)
         self.table.clear()
         for row in self.rows:
@@ -216,6 +245,14 @@ class WeekPanel(QWidget):
             daily = [r for r in self.rows if r["due_date"] == day.isoformat()]
             inner.addWidget(text(f"{'今天 · ' if day == date.today() else ''}周{'一二三四五六日'[offset]}\n{day:%Y-%m-%d}"))
             inner.addWidget(text(f"{sum(r['status']=='已完成' for r in daily)}/{len(daily)}项完成\n预计 {sum(r['task'].duration_minutes for r in daily)} 分钟", True))
+            if limits[day.weekday()] is not None:
+                from desktop.schedule_ui import load_text, set_load_label
+                load = loads.get(day.isoformat())
+                load_label = text("")
+                set_load_label(load_label, f"全部活动计划与独立任务 {load['total'] if load else 0} / {limits[day.weekday()]}分钟" +
+                               (f" · 超出{load['over']}分钟" if load and load['over'] else ""), bool(load and load["over"]))
+                load_label.setToolTip(load_text(load, day, limits))
+                inner.addWidget(load_label)
             for row in daily:
                 card = TaskCard(row, self.select_task, self.edit_task, self.start_focus, today=today)
                 self.cards.append(card)
@@ -232,6 +269,44 @@ class WeekPanel(QWidget):
         if self.selected_id not in {r["id"] for r in self.rows}:
             self.selected_id = None
         self.select_task(self.selected_id)
+
+    def render_context(self, plan, subject, status):
+        candidates = [r for r in self.store.tasks(plan) if not r["archived"]]
+        lines = []
+        if plan and plan != "__standalone__":
+            saved = self.store.get_plan(plan)
+            lines.append(f"实际排期：{saved['start_date']} — {saved['schedule']['end_date']}；预算始终汇总全部活动计划。")
+            from desktop.scheduling import paused
+            if paused(saved["schedule"]):
+                lines.append(f"计划已暂停，{saved['schedule']['resume_date']} 恢复；任务保留展示，不计活动负荷。")
+        if not self.rows:
+            in_week = [r for r in candidates if self.start.isoformat() <= r["due_date"] <= (self.start + timedelta(days=6)).isoformat()]
+            if in_week:
+                lines.append("科目或状态筛选隐藏了本周任务，可清除筛选查看。")
+            elif candidates and (self.start.isoformat() > max(r["due_date"] for r in candidates) or
+                                 (self.start + timedelta(days=6)).isoformat() < min(r["due_date"] for r in candidates)):
+                lines.append("当前周不在任务排期内，可跳到计划首周或下一项未完成任务所在周。")
+            else:
+                lines.append("该周确实没有任务，可切换周次或调整排期。")
+        self.context.setText("\n".join(lines))
+        self.context.setVisible(bool(lines))
+
+    def first_week(self):
+        rows = [r for r in self.store.tasks(self.plan_filter.currentData()) if not r["archived"]]
+        if rows:
+            self.jump(date.fromisoformat(min(r["due_date"] for r in rows)))
+
+    def next_task(self):
+        rows = [r for r in self.store.tasks(self.plan_filter.currentData()) if not r["archived"] and r["status"] != "已完成"]
+        if rows:
+            self.jump(date.fromisoformat(min(r["due_date"] for r in rows)))
+
+    def clear_filters(self):
+        for combo in (self.plan_filter, self.subject_filter, self.status_filter):
+            combo.blockSignals(True)
+            combo.setCurrentIndex(0)
+            combo.blockSignals(False)
+        self.render()
 
     def select_table(self):
         item = self.table.currentItem()

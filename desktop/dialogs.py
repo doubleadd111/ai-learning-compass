@@ -61,8 +61,8 @@ class PlanDialog(QDialog):
             layout.setContentsMargins(0, 0, 0, 0)
         lead = QLabel("把目标拆成每天能完成的一步")
         lead.setObjectName("brand")
-        lead.setVisible(not embedded)
         layout.addWidget(lead)
+        lead.setVisible(not embedded)
         form = QFormLayout()
         self.subject = QComboBox()
         self.subject.addItems(["Python", "英语", "考试复习", "其他学习目标"])
@@ -250,7 +250,7 @@ class TaskDialog(QDialog):
         self.ai_locked = QCheckBox("禁止 AI 修改这项任务")
         self.ai_locked.setChecked(bool(row.get("ai_locked", row.get("user_modified", 0))))
         from desktop.planning import protection_reason
-        self.ai_locked.setEnabled(not locked and not protection_reason({**row, "ai_locked": 0}))
+        self.ai_locked.setEnabled(not locked and not row.get("manual") and not protection_reason({**row, "ai_locked": 0}))
         reminder_box = QWidget()
         rlayout = QHBoxLayout(reminder_box)
         rlayout.setContentsMargins(0, 0, 0, 0)
@@ -277,13 +277,18 @@ class TaskDialog(QDialog):
         tip.setObjectName("muted")
         tip.setWordWrap(True)
         layout.addWidget(tip)
+        if row.get("manual"):
+            from PySide6.QtWidgets import QPushButton
+            remove = QPushButton("删除这项手动任务…")
+            remove.clicked.connect(lambda: self.done(2))
+            layout.addWidget(remove)
         if locked:
             for widget in (self.title, self.description, self.deliverable, self.duration, self.due, self.status):
                 widget.setEnabled(False)
         buttons(self, layout)
 
     def values(self):
-        return dict(task_id=self.row["id"], payload=DailyTask(day=self.row["day"], title=self.title.text().strip(),
+        return dict(task_id=self.row["id"], payload=DailyTask(day=self.row["day"] or 1, title=self.title.text().strip(),
                     description=self.description.toPlainText().strip(), duration_minutes=self.duration.value(), deliverable=self.deliverable.text().strip()),
                     due_date=self.due.date().toString("yyyy-MM-dd"), remind_at=self.reminder_time.time().toString("HH:mm") if self.reminder.isChecked() else None,
                     status=self.status.currentText(), manual_minutes=self.manual.value(), difficulty=self.difficulty.currentData(), note=self.note.toPlainText().strip(),

@@ -119,6 +119,9 @@ def test_sdk_timeout_message_and_no_implicit_retry(monkeypatch):
     control = RequestControl()
     with httpx.Client(transport=CancellableTransport(control, async_transport=httpx.MockTransport(handle)), trust_env=False) as http:
         with OpenAI(api_key="placeholder", base_url=config.base_url, http_client=http, max_retries=0) as client:
+            # This test measures one stalled transport request, not the SDK's
+            # first lazy resource import (which can consume 1s on loaded Windows).
+            _ = client.responses
             gateway = ModelGateway(config, "placeholder", client=client)
             gateway.control = control
             with pytest.raises(GatewayError, match="超时"):

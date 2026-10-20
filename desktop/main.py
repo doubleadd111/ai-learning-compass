@@ -99,6 +99,10 @@ def main():
                 if args.input_scope_check:
                     from desktop.input_check import check_input_controls
                     report['input_scope'] = check_input_controls(window)
+                from desktop.deletion_check import check_plan_deletion
+                report['plan_deletion'] = check_plan_deletion(window)
+                from desktop.history_check import check_plan_history
+                report['plan_history'] = check_plan_history(window)
                 if args.guide_window_check:
                     from desktop.guide import open_guide
                     guide = open_guide(window, "modify")
@@ -119,6 +123,22 @@ def main():
                     assert hwnd != int(window.winId()) and not user32.GetWindow(hwnd, 4)
                     assert not (user32.GetWindowLongW(hwnd, -20) & 0x80)  # Not WS_EX_TOOLWINDOW.
                     report["native_guide_window"] = dict(ownerless=True, separate_hwnd=True, taskbar_eligible=True, restored=True)
+                    from PySide6.QtWidgets import QDialog
+                    from PySide6.QtCore import Qt
+                    source_dialog = QDialog(window)
+                    source_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+                    source_dialog.show()
+                    app.processEvents()
+                    assert open_guide(source_dialog, "modify") is guide
+                    app.processEvents()
+                    assert guide.isActiveWindow() and guide.windowHandle().transientParent() is source_dialog.windowHandle()
+                    assert user32.GetWindow(int(guide.winId()), 4) == int(source_dialog.winId())
+                    source_dialog.reject()
+                    app.processEvents()
+                    assert guide.windowHandle().transientParent() is None and guide.isVisible()
+                    report["modal_guide"] = dict(above_source=True, interactive=True, detached_after_close=True, singleton=True)
+                    from desktop.guide_check import check_help_lifecycle
+                    report["guide_lifecycle"] = check_help_lifecycle(window)
                 from desktop.credentials import CredentialStore
                 from desktop.models import new_id
                 temporary_credential = "smoke-" + new_id()
