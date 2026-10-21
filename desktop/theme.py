@@ -109,6 +109,13 @@ def apply_theme(app, choice="system"):
         QPushButton#planDangerAction:hover, QPushButton#planDangerAction[hovered="true"] {{ background:{colors['danger_hover']}; color:{colors['danger']}; }}
         QPushButton#planDangerAction:focus {{ background:{colors['danger_hover']}; border:1px solid {colors['danger']}; }}
         QPushButton#planDangerAction:disabled {{ color:{muted}; background:transparent; }}
+        QPushButton#menuAction {{ background:transparent; border:1px solid transparent; text-align:left; padding:10px 12px; border-radius:7px; }}
+        QPushButton#menuAction[menuActive="true"] {{ background:{hover}; color:{accent}; border-color:{line}; }}
+        QPushButton#menuAction[menuActive="false"] {{ background:transparent; color:{ink}; border-color:transparent; }}
+        QPushButton#planDangerAction[menuActive="true"] {{ background:{colors['danger_hover']}; color:{colors['danger']}; }}
+        QPushButton#menuAction:pressed {{ background:{pressed}; }}
+        QPushButton#menuAction:disabled {{ background:transparent; color:{muted}; }}
+        QPushButton#menuAction[compactMenu="true"], QPushButton#planDangerAction[compactMenu="true"] {{ padding:6px 12px; min-height:18px; }}
         QPushButton#nav {{ background:transparent; border:1px solid transparent; text-align:left; padding:12px 16px; color:{muted}; }}
         QPushButton#nav:hover, QPushButton#nav[hovered="true"] {{ background:{hover}; color:{ink}; border-color:transparent; }}
         QPushButton#nav:checked {{ background:{card}; color:{accent}; border-color:{line}; font-weight:600; }}
@@ -202,6 +209,9 @@ def apply_theme(app, choice="system"):
         QCheckBox::indicator:hover {{ border-color:{accent}; background:{hover}; }}
         QCheckBox::indicator:checked {{ background:#356CF6; border-color:#356CF6; image:url("{assets}/check.svg"); }}
         QCheckBox::indicator:disabled {{ background:{colors['disabled']}; border-color:{line}; }}
+        QTreeWidget#stepChecklist::indicator {{ width:17px; height:17px; background:{card}; border:1px solid {muted}; border-radius:5px; }}
+        QTreeWidget#stepChecklist::indicator:hover {{ border-color:{accent}; background:{hover}; }}
+        QTreeWidget#stepChecklist::indicator:checked {{ background:#356CF6; border-color:#356CF6; image:url("{assets}/check.svg"); }}
         QListWidget, QTreeWidget, QTableWidget {{ background:{card}; alternate-background-color:{card}; border:1px solid {line}; border-radius:12px; padding:5px; outline:0; }}
         QListWidget::item {{ padding:15px 14px; margin:3px; border:1px solid transparent; border-radius:9px; }}
         QListWidget#planLibraryList::item {{ padding:0; }}

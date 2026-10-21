@@ -196,14 +196,13 @@ def test_fetched_model_dialog_uses_guard_and_only_applies_on_confirmation(qtbot,
     qtbot.addWidget(window)
     monkeypatch.setattr(window, 'gateway', lambda *_: object())
     monkeypatch.setattr(window, 'start_work', lambda text, work, done, gateway, **kwargs: done(['mock-one', 'mock-two']))
-    def interact():
-        dialog = QApplication.activeModalWidget()
-        assert isinstance(dialog, ModelSelectionDialog) and isinstance(dialog.model, SoftComboBox)
-        dialog.model.setEditText('my-own-model')
-        dialog.accept() if accept else dialog.reject()
-    QTimer.singleShot(0, interact)
     try:
         window.fetch_models()
+        dialog = window.tools.windows[('models', config.id)]
+        assert isinstance(dialog, ModelSelectionDialog) and isinstance(dialog.model, SoftComboBox)
+        assert not dialog.isModal() and dialog.parentWidget() is None
+        dialog.model.setEditText('my-own-model')
+        dialog.accept() if accept else dialog.reject()
         saved = store.connections()[0]
         assert saved.model == ('my-own-model' if accept else 'original')
         assert saved.base_url == config.base_url and saved.api_type == config.api_type

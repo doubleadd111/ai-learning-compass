@@ -146,13 +146,12 @@ def test_filtered_focus_and_edit_receive_correct_task_id(ui, qtbot, monkeypatch)
     first = ui.today_tree.topLevelItem(0)
     qtbot.mouseClick(ui.today_tree.itemWidget(first, 4), Qt.MouseButton.LeftButton)
     assert captured == [expected]
-    def complete():
-        dialog = QApplication.activeModalWidget()
-        dialog.status.setCurrentText("已完成")
-        dialog.note.setPlainText("从筛选列表填写记录")
-        dialog.accept()
-    QTimer.singleShot(0, complete)
     ui.edit_tree_task(first)
+    dialog = ui.tools.windows[('task', expected)]
+    assert not dialog.isModal()
+    dialog.status.setCurrentText("已完成")
+    dialog.note.setPlainText("从筛选列表填写记录")
+    dialog.accept()
     assert ui.today_plan_filter.currentData() == pid and expected not in ids(ui)
     record = next(t for t in ui.store.tasks(pid) if t["id"] == expected)
     assert record["status"] == "已完成" and record["note"] == "从筛选列表填写记录"

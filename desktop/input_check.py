@@ -28,6 +28,11 @@ def check_input_controls(window):
     forms.append(ScheduleDialog(window.store, window, plan_id=saved['id'], kind='暂停'))
     forms.append(ManualTaskDialog(window.store, window))
     forms.append(PlanHistoryWindow(window, saved['id']))
+    from desktop.trash_ui import TrashDialog, PurgeDialog
+    forms.extend([TrashDialog(window.store, window), PurgeDialog('离线清除确认检查', window)])
+    from desktop.learning_ui import StatisticsDialog, StepsDialog, StructureDialog, RecurringDialog, SeriesListDialog
+    forms.extend([StatisticsDialog(window.store, window), StepsDialog(window.store, saved['tasks'][0]['id'], window),
+        StructureDialog(window.store, saved['id'], window), RecurringDialog(window.store, window), SeriesListDialog(window.store, window)])
     draft = PlanningDraft(profile=saved['profile'], start_date=date.fromisoformat(saved['start_date']),
                           weekdays=json.loads(saved['weekdays_json']), connection=config)
     flow = PlanningWindow(window, draft)

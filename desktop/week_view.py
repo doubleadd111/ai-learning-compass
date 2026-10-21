@@ -11,7 +11,9 @@ from desktop.models import DesktopProfile
 from desktop.controls import SoftComboBox as QComboBox
 from desktop.task_status import overdue_days, display_status, matches_status
 from desktop.task_style import TaskItemDelegate, mark_overdue, focus_tooltip
+from desktop.task_tip import set_task_tip
 from desktop.focus_tip import set_focus_hint
+from desktop.task_context import bind_task_menu
 
 
 def text(value, muted=False):
@@ -221,7 +223,7 @@ class WeekPanel(QWidget):
             item = QTreeWidgetItem([row["task"].title, row["due_date"], row["plan_title"], f"{row['task'].duration_minutes} 分钟",
                                     f"{(row['manual_seconds'] + row['focus_seconds']) // 60} 分钟", display_status(row, today), ""])
             item.setData(0, Qt.ItemDataRole.UserRole, row["id"])
-            item.setToolTip(0, row["task"].description)
+            set_task_tip(item, row)
             mark_overdue(item, row, 7, today)
             self.table.addTopLevelItem(item)
             attach_focus_button(self.table, item, 6, row, self.start_focus)
@@ -255,6 +257,7 @@ class WeekPanel(QWidget):
                 inner.addWidget(load_label)
             for row in daily:
                 card = TaskCard(row, self.select_task, self.edit_task, self.start_focus, today=today)
+                bind_task_menu(card,self)
                 self.cards.append(card)
                 inner.addWidget(card)
             if not daily:

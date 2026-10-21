@@ -103,6 +103,20 @@ def main():
                 report['plan_deletion'] = check_plan_deletion(window)
                 from desktop.history_check import check_plan_history
                 report['plan_history'] = check_plan_history(window)
+                from desktop.learning_check import check_learning_tools
+                report['learning_tools'] = check_learning_tools(store)
+                from desktop.workspace_check import check_workspace_windows
+                report['workspace_windows'] = check_workspace_windows(window)
+                from desktop.discovery_check import check_task_discovery
+                report['task_discovery'] = check_task_discovery(window)
+                from desktop.focus_search_check import check_focus_search
+                report['focus_search'] = check_focus_search(window)
+                from desktop.search_scope_check import check_search_scope
+                report['search_scope'] = check_search_scope(window)
+                from desktop.task_context_check import check_task_context
+                report['task_context'] = check_task_context(window)
+                from desktop.trash_check import check_trash
+                report['trash'] = check_trash(window)
                 if args.guide_window_check:
                     from desktop.guide import open_guide
                     guide = open_guide(window, "modify")

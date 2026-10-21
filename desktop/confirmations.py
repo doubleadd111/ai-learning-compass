@@ -18,6 +18,7 @@ def text_label(text, name=None):
 class ConfirmationDialog(QDialog):
     def __init__(self, title, description, parent=None, *, note="", confirm="确认继续", cancel="取消"):
         super().__init__(parent)
+        self.setWindowModality(Qt.WindowModality.WindowModal)
         self.setWindowTitle(title + " · 学习罗盘")
         self.resize(650, 590)
         self.setMinimumSize(480, 420)
@@ -59,8 +60,8 @@ class DeletePlanDialog(ConfirmationDialog):
     PHRASE = "确认删除"
 
     def __init__(self, title, task_count, completed_count, parent=None, *, blocking_reason=""):
-        super().__init__("删除这份计划？", "这会删除该计划、全部任务，以及关联的学习记录、提醒和历史。", parent,
-            note="只是暂时不学？建议返回选择“归档”，记录会保留。删除前会另存一份本机备份；备份失败时不会删除。",
+        super().__init__("删除这份计划？", "该计划、全部任务和关联学习记录会移入回收站，可在30天内恢复。", parent,
+            note="只是暂时不学？建议返回选择“归档”。回收站入口：计划库 → 历史与数据。删除前仍会另存本机备份；备份失败时不会删除。",
             confirm="删除这份计划", cancel="取消，保留计划")
         self.resize(620, 550)
         self.confirmed = False

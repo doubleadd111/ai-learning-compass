@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import math
+from html import escape
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from time import monotonic
 
-from PySide6.QtCore import Qt, QThreadPool, QTimer, QUrl
+from PySide6.QtCore import Qt, QThreadPool, QTimer, QUrl, QEvent
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QFileDialog, QFrame,
     QHBoxLayout, QHeaderView, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMainWindow,
@@ -17,7 +18,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QFileDialog, QF
 from demo_sample import sample_learning_plan
 from desktop import DISPLAY_VERSION, build_label
 from desktop.credentials import CredentialStore
-from desktop.dialogs import ConnectionDialog, PlanDialog, PreviewDialog, TaskDialog, spin, choose_model
+from desktop.dialogs import ConnectionDialog, PlanDialog, PreviewDialog, TaskDialog, ModelSelectionDialog, spin
 from desktop.focus import FocusTimer
 from desktop.gateway import GatewayError, ModelGateway
 from desktop.models import DesktopProfile
@@ -35,12 +36,15 @@ from desktop.week_view import WeekPanel, attach_focus_button
 from desktop.diagnostics import ConnectionDiagnostic
 from desktop.task_status import display_status
 from desktop.task_style import TaskItemDelegate, mark_overdue, focus_tooltip, FOCUS_ROLE
+from desktop.task_tip import set_task_tip
 from desktop.plan_list import PlanListDelegate, populate_plan_item
 from desktop.schedule_ui import ScheduleDialog, BudgetSettings, budget_action
 from desktop.scheduling import paused
-from desktop.confirmations import DeletePlanDialog
-from desktop.plan_actions import PlanActionsPopup
+from desktop.confirmations import DeletePlanDialog, ConfirmationDialog
+from desktop.action_menu import menu_button
+from desktop.tool_windows import ToolWindows
 from desktop.history_ui import PlanHistoryWindow
+from desktop.task_search import TaskSearch
 
 
 def label(text, *, name=None, wrap=False):
@@ -83,16 +87,32 @@ def page_layout():
     return page, layout
 
 
+class ReadableTaskTree(QTreeWidget):
+    def fit_title(self, *_):
+        if self.columnCount() < 2:
+            return
+        others = sum(self.columnWidth(i) for i in range(1,self.columnCount()))
+        width = max(210,self.viewport().width()-others)
+        if self.columnWidth(0) != width:
+            self.setColumnWidth(0,width)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.fit_title()
+
+
 def task_tree():
-    tree = QTreeWidget()
+    tree = ReadableTaskTree()
     tree.setItemDelegate(TaskItemDelegate(tree))
     tree.setHeaderLabels(["任务", "日期", "预计", "状态", "操作"])
     tree.setRootIsDecorated(False)
     tree.setAlternatingRowColors(True)
     tree.header().setStretchLastSection(False)
-    tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+    tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
     for column in (1, 2, 3, 4):
         tree.header().setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+    tree.header().sectionResized.connect(tree.fit_title)
+    tree.fit_title()
     return tree
 
 
@@ -123,6 +143,7 @@ class MainWindow(QMainWindow):
         self.request_status_timer.setInterval(100)
         self.request_status_timer.timeout.connect(self.update_request_status)
         self.selected_plan_id = None
+        self.library_standalone = False
         self.display_date = date.today()
         self.planning_window = None
         self.history_windows = []
@@ -133,7 +154,12 @@ class MainWindow(QMainWindow):
         self.resize(1220, 820)
         self.setMinimumSize(980, 680)
         self.tray = None
+        self.tools = ToolWindows(self)
+        QApplication.instance()._learning_tool_windows = self.tools
         self._build()
+        from desktop.task_context import bind_task_menu
+        for tree in (self.today_tree,self.plan_tree,self.week_tree):
+            bind_task_menu(tree,self)
         self.guide_shortcut = QShortcut(QKeySequence("F1"), self)
         self.guide_shortcut.activated.connect(lambda: open_guide(self))
         self._build_tray()
@@ -246,6 +272,12 @@ class MainWindow(QMainWindow):
                                    "把时间留给真正重要的事。", "专注当下，慢慢抵达。",
                                    "让工具适合你的习惯。"][index])
 
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow() and hasattr(self, 'week_panel'):
+            # A peer tool may have saved while the main workspace was behind it.
+            self.refresh()
+
     def _today_page(self):
         page, layout = page_layout()
         layout.addSpacing(8)
@@ -290,17 +322,29 @@ class MainWindow(QMainWindow):
         plan_label.setBuddy(self.today_plan_filter)
         self.today_plan_filter.currentIndexChanged.connect(self.refresh_today_tasks)
         task_filters.addWidget(self.today_plan_filter)
+        self.today_completed = QCheckBox('查看已完成')
+        self.today_completed.setToolTip('同时显示安排在今天的已完成任务；更早或未来的已完成任务请到计划库或独立任务箱查看。')
+        self.today_completed.toggled.connect(self.refresh_today_tasks)
+        task_filters.addWidget(self.today_completed)
         layout.addLayout(task_filters)
         self.today_budget = label("", name="muted", wrap=True)
         layout.addWidget(self.today_budget)
-        layout.addWidget(horizontal(button("添加任务", self.add_manual_task, True),
-                                    button("安排逾期任务", lambda: self.open_schedule(overdue=True))))
+        layout.addWidget(horizontal(menu_button("任务管理", [
+            ("添加自己的任务", self.add_manual_task),
+            ("安排逾期任务", lambda: self.open_schedule(overdue=True)),
+            ("记录／编辑选中任务", lambda: self.edit_tree_task(self.today_tree.currentItem()))]),
+            menu_button("学习工具", [("学习统计", self.open_statistics), ("周期任务与复习", self.open_recurring),
+                ("选中任务的执行步骤", lambda: self.open_steps(self.today_tree.currentItem())),
+                ("使用指南", lambda: open_guide(self, "tools"))])))
+        self.today_task_search = TaskSearch(status=False)
+        self.today_task_search.changed.connect(self.refresh_today_tasks)
+        layout.addWidget(self.today_task_search)
+        layout.addWidget(label('双击任务可打开详情、填写笔记或修改状态。查看已完成只显示安排在今天的完成任务。', name='muted', wrap=True))
         self.today_empty = label("", name="muted", wrap=True)
         layout.addWidget(self.today_empty)
         self.today_tree = task_tree()
         self.today_tree.itemDoubleClicked.connect(self.edit_tree_task)
         layout.addWidget(self.today_tree, 1)
-        layout.addWidget(button("记录／编辑选中任务", lambda: self.edit_tree_task(self.today_tree.currentItem())), 0, Qt.AlignmentFlag.AlignLeft)
         self.stack.addWidget(page)
 
     def _library_page(self):
@@ -311,9 +355,6 @@ class MainWindow(QMainWindow):
         self.archived = QCheckBox("查看已归档")
         self.archived.toggled.connect(self.refresh_library)
         layout.addWidget(horizontal(self.search, self.archived))
-        layout.addWidget(horizontal(button("AI 调整计划", self.modify_plan, True),
-                                    button("按此计划创建副本", self.fork_plan),
-                                    button("查看需求与历史", self.show_history), button("继续草稿", self.resume_draft)))
         columns = QHBoxLayout()
         self.plan_list = QListWidget()
         self.plan_list.setObjectName("planLibraryList")
@@ -329,26 +370,39 @@ class MainWindow(QMainWindow):
         right.addWidget(self.plan_title)
         self.plan_summary = label("选择一份计划，继续上次的学习。", name="muted", wrap=True)
         right.addWidget(self.plan_summary)
-        self.plan_more_button = button("更多操作", self.show_plan_menu)
-        self.plan_more_menu = PlanActionsPopup(self)
-        self.delete_plan_action = self.plan_more_menu.delete_action
-        self.delete_plan_action.triggered.connect(self.delete_selected)
-        right.addWidget(horizontal(button("重命名", self.rename_selected), button("归档／恢复", self.archive_selected),
-                                   button("导出 JSON", self.export_selected), self.plan_more_button))
-        self.pause_plan_button = button("暂停计划", self.pause_selected)
-        right.addWidget(horizontal(button("添加任务到此计划", lambda: self.add_manual_task(self.selected_plan_id)),
-                                   button("调整排期", lambda: self.open_schedule(plan_id=self.selected_plan_id)), self.pause_plan_button))
+        self.plan_more_button = menu_button("计划管理", [("重命名计划", self.rename_selected),
+            ("归档／恢复归档", self.archive_selected), ("按此计划创建副本", self.fork_plan)])
+        self.plan_more_menu = self.plan_more_button.action_menu
+        self.plan_more_menu.section("危险操作 · 需要输入确认文字")
+        self.delete_plan_action = self.plan_more_menu.add_action("删除计划…", self.delete_selected, danger=True)
+        # Kept as a stable safety-check entry, not a separate delete button.
+        self.plan_more_menu.delete_action = self.delete_plan_action
+        self.plan_more_menu.delete_button = self.plan_more_menu.items[-1][1]
+        tasks_menu = menu_button("任务安排", [
+            ("添加任务到此计划", lambda: self.add_manual_task(self.selected_plan_id)),
+            ("记录／编辑选中任务", lambda: self.edit_tree_task(self.plan_tree.currentItem())),
+            ("调整排期", lambda: self.open_schedule(plan_id=self.selected_plan_id)),
+            ("任务分组与执行步骤", self.open_structure)])
+        self.pause_plan_button = tasks_menu.action_menu.add_action("暂停计划", self.pause_selected)
+        self.tasks_menu_button = tasks_menu
+        self.ai_menu_button = menu_button("AI 辅助", [("AI 调整计划", self.modify_plan), ("生成本周复盘", self.review_selected)])
+        self.history_menu_button = menu_button("历史与数据", [("调整历史与回溯", self.undo_selected), ("查看需求与历史", self.show_history),
+                ("继续草稿", self.resume_draft), ("导出 JSON", self.export_selected), ("回收站", self.open_trash)])
+        right.addWidget(horizontal(tasks_menu, self.plan_more_button, self.ai_menu_button, self.history_menu_button))
         self.plan_progress = QProgressBar()
         self.plan_progress.setTextVisible(False)
         right.addWidget(self.plan_progress)
+        self.library_task_search = TaskSearch()
+        self.library_task_search.changed.connect(self.refresh_library_tasks)
+        right.addWidget(self.library_task_search)
+        self.library_task_hint = label('双击任务打开详情；可搜索名称、说明、完成标准或日期。', name='muted', wrap=True)
+        right.addWidget(self.library_task_hint)
         self.plan_tree = task_tree()
         self.plan_tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
         self.plan_tree.itemDoubleClicked.connect(self.edit_tree_task)
         right.addWidget(self.plan_tree, 1)
         self.review_text = label("", name="muted", wrap=True)
         right.addWidget(self.review_text)
-        right.addWidget(horizontal(button("记录／编辑任务", lambda: self.edit_tree_task(self.plan_tree.currentItem())),
-                                   button("生成本周复盘", self.review_selected, True), button("调整历史与回溯", self.undo_selected)))
         columns.addLayout(right, 1)
         layout.addLayout(columns, 1)
         self.stack.addWidget(page)
@@ -391,9 +445,10 @@ class MainWindow(QMainWindow):
         self.focus_task = QComboBox()
         self.focus_task.setAccessibleName("专注关联任务")
         content.addWidget(self.focus_task)
-        self.focus_minutes = spin(1, 180, self.focus.focus_minutes)
+        self.focus_minutes = spin(1, 240, self.focus.focus_minutes)
         self.break_minutes = spin(1, 60, self.focus.break_minutes)
         content.addWidget(horizontal(label("专注分钟"), self.focus_minutes, label("休息分钟"), self.break_minutes))
+        content.addWidget(label('新任务按预计分钟开始；继续同一任务保留剩余时间。不关联任务时可自行设置。', name='muted', wrap=True))
         content.addWidget(horizontal(button("开始／继续", self.start_focus, True), button("暂停", self.pause_focus), button("结束本次", self.stop_focus)))
         content.addWidget(label("专注用时会自动记下。先完成这一小步，再去学习记录中确认任务。休眠或退出时自动暂停。", name="muted", wrap=True))
         layout.addWidget(card, 0, Qt.AlignmentFlag.AlignHCenter)
@@ -454,6 +509,7 @@ class MainWindow(QMainWindow):
         data_layout.setContentsMargins(0, 28, 0, 0)
         data_layout.addWidget(label("把学习记录留在自己手里", name="brand"))
         data_layout.addWidget(label(f"数据目录：{self.store.directory}\n每天首次修改前自动备份，保留最近 30 个每日备份。软件升级和正常卸载会保留此目录。", name="muted", wrap=True))
+        data_layout.addWidget(button('回收站：找回误删的计划和手动任务', self.open_trash))
         data_layout.addWidget(horizontal(button("立即备份", self.backup_now, True), button("恢复整库备份", self.restore_backup),
                                         button("打开数据目录", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.store.directory))))))
         data_layout.addWidget(label("旧版迁移与计划交换", name="brand"))
@@ -577,8 +633,11 @@ class MainWindow(QMainWindow):
         """Filter the existing Today scope without changing data or global statistics."""
         selected = self.today_tree.currentItem()
         selected_id = selected.data(0, Qt.ItemDataRole.UserRole) if selected else None
-        rows = self.store.tasks(self.today_plan_filter.currentData(), due=date.today().isoformat())
-        self.fill_tasks(self.today_tree, rows)
+        today = date.today().isoformat()
+        rows = [r for r in self.store.tasks(self.today_plan_filter.currentData()) if not r['archived'] and not r.get('paused')
+                and r['due_date'] <= today and (r['status'] != '已完成' or self.today_completed.isChecked() and r['due_date'] == today)]
+        rows = self.today_task_search.apply(rows, date.today())
+        self.fill_tasks(self.today_tree, rows, self.today_task_search)
         for i in range(self.today_tree.topLevelItemCount()):
             item = self.today_tree.topLevelItem(i)
             if item.data(0, Qt.ItemDataRole.UserRole) == selected_id:
@@ -588,35 +647,48 @@ class MainWindow(QMainWindow):
                                  if self.today_plan_filter.currentData() else
                                  "没有今日或逾期的未完成任务。未来任务可在计划库或周视图查看。")
         self.today_empty.setVisible(not rows)
+        if not rows and (self.today_task_search.query.text() or self.today_task_search.limit_dates.isChecked()):
+            self.today_empty.setText('没有匹配的任务。可清除搜索或调整日期；今日页仍只查今日和逾期范围。')
+        if self.today_task_search.invalid_range():
+            self.today_empty.setText('结束日期不能早于开始日期，请调整日期范围。')
 
-    def fill_tasks(self, tree, rows):
+    def fill_tasks(self, tree, rows, search=None):
         tree.clear()
         for task in rows:
             item = QTreeWidgetItem([task["task"].title, task["due_date"], f"{task['task'].duration_minutes} 分钟", display_status(task, date.today()), ""])
             item.setData(0, Qt.ItemDataRole.UserRole, task["id"])
-            slot = "手动添加" if task.get("manual") else f"第{task['week']}周第{task['day']}天"
-            item.setToolTip(0, f"{task['plan_title']} · {slot}\n{task['task'].description}\n产出：{task['task'].deliverable}")
+            set_task_tip(item, task)
             mark_overdue(item, task, 5, date.today())
+            if search:
+                search.annotate(item, task)
             tree.addTopLevelItem(item)
             attach_focus_button(tree, item, 4, task, self.start_focus_for_task)
 
     def refresh_library(self, *_args):
-        previous = self.selected_plan_id
+        previous = self.selected_plan_id or ('__standalone__' if self.library_standalone else None)
         self.plan_list.blockSignals(True)
         self.plan_list.clear()
-        chosen = 0
+        chosen = -1
         for i, plan in enumerate(self.store.list_plans(self.search.text(), self.archived.isChecked())):
             profile = DesktopProfile.model_validate_json(plan["profile_json"])
             item = QListWidgetItem()
             populate_plan_item(item, plan, profile.subject)
             self.plan_list.addItem(item)
             if plan["id"] == previous:
-                chosen = i
-        self.plan_list.blockSignals(False)
+                chosen = self.plan_list.count() - 1
+        rows = self.store.tasks('__standalone__')
+        independent = QListWidgetItem()
+        populate_plan_item(independent, dict(id='__standalone__', title='独立任务', total=len(rows),
+            completed=sum(t['status'] == '已完成' for t in rows)), '固定任务箱 · 全部日期')
+        independent.setToolTip('不属于任何计划的任务。包含未完成和已完成任务，可搜索全部日期；此入口不能删除或归档。')
+        self.plan_list.insertItem(0, independent)
+        chosen = 0 if previous == '__standalone__' or chosen == -1 and self.plan_list.count() == 1 else (chosen + 1 if chosen >= 0 else 1)
         if self.plan_list.count():
             self.plan_list.setCurrentRow(chosen)
+            self.plan_list.blockSignals(False)
             self.plan_selected(self.plan_list.currentItem())
         else:
+            self.plan_list.blockSignals(False)
             self.selected_plan_id = None
             self.plan_title.clear()
             self.plan_tree.clear()
@@ -624,10 +696,30 @@ class MainWindow(QMainWindow):
             self.review_text.clear()
             self.plan_progress.setValue(0)
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'plan_summary') and hasattr(self, 'review_text'):
+            compact = self.height() < 750
+            self.plan_summary.setVisible(not compact)
+            self.review_text.setVisible(not compact)
+
     def plan_selected(self, item, *_args):
         if not item:
             return
-        self.selected_plan_id = item.data(Qt.ItemDataRole.UserRole)
+        entry = item.data(Qt.ItemDataRole.UserRole)
+        self.library_standalone = entry == '__standalone__'
+        self.selected_plan_id = None if self.library_standalone else entry
+        self.set_library_actions()
+        if self.library_standalone:
+            rows = self.store.tasks('__standalone__')
+            done = sum(t['status'] == '已完成' for t in rows)
+            self.plan_title.setText('独立任务')
+            self.plan_summary.setText('不属于任何计划的任务都在这里。初始显示全部日期和全部状态；完成后不会消失。\n这是固定任务箱，不是学习计划，不能删除或归档入口；完整记录可在设置中做整库备份。')
+            self.plan_title.setToolTip('<p>' + escape(self.plan_summary.text()).replace('\n','<br>') + '</p>')
+            self.plan_progress.setValue(round(done / len(rows) * 100) if rows else 0)
+            self.review_text.setText('完成任务仍可搜索和查看记录。添加任务时选择“独立任务”；修改日期可双击任务进入详情。')
+            self.refresh_library_tasks()
+            return
         saved = self.store.get_plan(self.selected_plan_id)
         self.pause_plan_button.setText("恢复学习" if paused(saved["schedule"]) else "暂停计划")
         profile = saved["profile"]
@@ -636,12 +728,46 @@ class MainWindow(QMainWindow):
         if paused(saved["schedule"]):
             self.plan_summary.setText(self.plan_summary.text() + f"\n已暂停 · {saved['schedule']['resume_date']} 当天恢复")
         self.plan_summary.setText(self.plan_summary.text() + f"\n实际排期：{saved['start_date']} — {saved['schedule']['end_date']}（学习内容周次不变）")
+        self.plan_title.setToolTip('<p>' + escape(self.plan_summary.text()).replace('\n','<br>') + '</p>')
         done = sum(t["status"] == "已完成" for t in saved["tasks"])
-        self.plan_progress.setValue(round(done / len(saved["tasks"]) * 100))
+        self.plan_progress.setValue(round(done / len(saved["tasks"]) * 100) if saved['tasks'] else 0)
         self.plan_progress.setFormat(f"已完成 {done}/{len(saved['tasks'])} 项")
-        self.fill_tasks(self.plan_tree, sorted(saved["tasks"], key=lambda t: (t["due_date"], t["week"], t["day"] or 0)))
+        self.refresh_library_tasks()
         reviews = self.store.reviews(self.selected_plan_id)
         self.review_text.setText("\n".join(reviews.values()) if reviews else "每周把任务标记为已完成或延期后，生成复盘并调整后续安排。")
+
+    def set_library_actions(self):
+        regular = bool(self.selected_plan_id)
+        self.plan_more_button.setEnabled(regular)
+        self.ai_menu_button.setEnabled(regular)
+        # Drafts exist before the first plan: never make resume depend on a plan.
+        self.history_menu_button.setEnabled(True)
+        for action, _ in self.history_menu_button.action_menu.items:
+            action.setEnabled(regular or action.text() in ('继续草稿', '回收站'))
+        for action, _ in self.plan_more_menu.items:
+            action.setEnabled(regular)
+        for action, _ in self.tasks_menu_button.action_menu.items:
+            if action is self.tasks_menu_button.action_menu.items[0][0]:
+                action.setText('添加独立任务' if self.library_standalone else '添加任务到此计划')
+            if action is self.pause_plan_button or action.text() == '调整排期':
+                action.setEnabled(regular)
+
+    def refresh_library_tasks(self, *_):
+        selected = self.plan_tree.currentItem()
+        task_id = selected.data(0, Qt.ItemDataRole.UserRole) if selected else None
+        source = '__standalone__' if self.library_standalone else self.selected_plan_id
+        rows = self.store.tasks(source) if source else []
+        filtered = self.library_task_search.apply(rows, date.today())
+        self.fill_tasks(self.plan_tree, filtered, self.library_task_search)
+        for i in range(self.plan_tree.topLevelItemCount()):
+            item = self.plan_tree.topLevelItem(i)
+            if item.data(0, Qt.ItemDataRole.UserRole) == task_id:
+                self.plan_tree.setCurrentItem(item)
+                break
+        self.library_task_hint.setText(f'显示 {len(filtered)}/{len(rows)} 项 · 双击任务打开详情、查看说明或修改记录。'
+            if filtered else '没有匹配的任务。请清除关键词、选择“全部状态”或调整日期范围。')
+        if self.library_task_search.invalid_range():
+            self.library_task_hint.setText('结束日期不能早于开始日期，请调整日期范围。')
 
     def change_week(self, direction):
         self.week_offset = self.week_offset + direction if direction else 0
@@ -654,6 +780,9 @@ class MainWindow(QMainWindow):
 
     def open_schedule(self, *, plan_id=None, overdue=False, kind="补排"):
         def action():
+            key = ("schedule", plan_id, overdue, kind)
+            if self.tools.existing(key):
+                return
             if self.worker:
                 raise ValueError("请先等待或取消当前模型请求，再调整排期")
             if kind == "暂停" and self.focus.task_id in {r["id"] for r in self.store.tasks(plan_id)} and (self.focus.session_id or self.focus.phase == "break"):
@@ -663,9 +792,11 @@ class MainWindow(QMainWindow):
                     return
                 self.focus.stop()
             dialog = ScheduleDialog(self.store, self, plan_id=plan_id, overdue=overdue, kind=kind)
-            if dialog.exec() == QDialog.DialogCode.Accepted:
-                self.refresh()
-                self.notice.setText("排期已保存，任务内容和学习记录保持不变。可在需求与历史中查看。")
+            def finished(result):
+                if result == QDialog.DialogCode.Accepted:
+                    self.refresh()
+                    self.notice.setText("排期已保存，任务内容和学习记录保持不变。可在需求与历史中查看。")
+            self.tools.show(dialog, key, finished)
         self.safe(action)
 
     def pause_selected(self):
@@ -801,13 +932,14 @@ class MainWindow(QMainWindow):
                 return
             if not self.planning_window.close():
                 return
-        self.planning_window = PlanningWindow(self, draft)
-        self.planning_window.show()
+        self.planning_window = self.tools.open("planning", lambda: PlanningWindow(self, draft))
 
     def resume_draft(self):
+        if self.tools.existing("drafts"):
+            return
         dialog = DraftsDialog(self.store, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.selected:
-            self.open_planning(dialog.selected)
+        self.tools.show(dialog, "drafts", lambda result: self.open_planning(dialog.selected)
+                        if result == QDialog.DialogCode.Accepted and dialog.selected else None)
 
     def fork_plan(self):
         if not self.selected_plan_id:
@@ -821,17 +953,21 @@ class MainWindow(QMainWindow):
                               connection=config, mastered=learned, parent_plan_id=saved["id"], parent_revision=saved["revision"])
         self.open_planning(draft)
 
-    def modify_plan(self):
-        if not self.selected_plan_id:
+    def modify_plan(self, *, plan_id=None, task_ids=None):
+        pid=plan_id if task_ids is not None else self.selected_plan_id
+        if not pid:
             self.notice.setText("先选择计划和需要调整的范围。")
             return
         self.pause_focus()
-        saved = self.store.get_plan(self.selected_plan_id)
-        selected = [item.data(0, Qt.ItemDataRole.UserRole) for item in self.plan_tree.selectedItems()]
-        dialog = ModificationDialog(saved, selected, self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        saved = self.store.get_plan(pid)
+        selected = list(task_ids) if task_ids is not None else [item.data(0, Qt.ItemDataRole.UserRole) for item in self.plan_tree.selectedItems()]
+        key=('modify-task',pid,tuple(selected)) if task_ids is not None else ('modify',pid)
+        if self.tools.existing(key):
             return
+        dialog = ModificationDialog(saved, selected, self)
         def begin():
+            if self.store.get_plan(saved['id'])['revision'] != saved['revision']:
+                raise ValueError('计划已有变化，请关闭调整范围窗口并重新选择，避免使用旧任务。')
             context = modification_context(saved, dialog.target_ids(saved, selected), self.store.reviews(saved["id"]))
             config = next((c for c in self.store.connections() if c.id == self.model_picker.currentData()), None)
             draft = PlanningDraft(kind="modify", profile=saved["profile"], start_date=date.fromisoformat(saved["start_date"]),
@@ -840,13 +976,12 @@ class MainWindow(QMainWindow):
                 source_context={**context, "confirmed_requirements": self.store.brief(saved["id"])},
                 request=dialog.intent.currentText() + "；" + dialog.text.toPlainText())
             self.open_planning(draft)
-        self.safe(begin)
+        self.tools.show(dialog, key, lambda result: begin() if result == QDialog.DialogCode.Accepted else None)
 
     def show_history(self):
         if self.selected_plan_id:
-            dialog = HistoryWindow(self.store, self.selected_plan_id, self)
-            self.history_windows.append(dialog)
-            dialog.show()
+            pid = self.selected_plan_id
+            self.tools.open(("requirements", pid), lambda: HistoryWindow(self.store, pid, self))
 
     def load_sample(self):
         profile, plan = sample_learning_plan()
@@ -862,31 +997,123 @@ class MainWindow(QMainWindow):
         task_id = item.data(0, Qt.ItemDataRole.UserRole)
         self.edit_task_id(task_id)
 
-    def edit_task_id(self, task_id):
+    def edit_task_id(self, task_id, *, field=None):
+        def focus_field(dialog):
+            target=getattr(dialog,field,None) if field else None
+            if target is not None and target.isEnabled():
+                target.setFocus()
+            return dialog
+        if old := self.tools.existing(("task", task_id)):
+            return focus_field(old)
         row = next((t for t in self.store.tasks() if t["id"] == task_id), None)
         if not row:
             return
-        dialog = TaskDialog(row, locked=row["week"] in self.store.reviews(row["plan_id"]), parent=self)
-        result = dialog.exec()
-        if result == 2 and row.get("manual"):
-            answer = QMessageBox.question(self, "删除手动任务", "删除这项任务及其专注、笔记和提醒记录？删除前的每日备份仍会保留。",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Cancel)
-            if answer == QMessageBox.StandardButton.Yes:
-                self.safe(lambda: self.store.delete_manual_task(task_id))
-                self.refresh()
-        elif result == QDialog.DialogCode.Accepted:
-            def save():
-                self.store.update_task(**dialog.values(), confirm_limits=True)
-                self.refresh()
+        dialog = TaskDialog(row, locked=row["week"] in self.store.reviews(row["plan_id"]), parent=self, store=self.store)
+        def finished(result):
+            self.refresh()
+            if result == 2 and row.get("manual"):
+                self.delete_task_id(task_id,expected=row)
+            elif result == QDialog.DialogCode.Accepted:
                 self.notice.setText("任务与学习记录已保存。")
-            self.safe(save)
+        self.tools.show(dialog, ("task", task_id), finished)
+        return focus_field(dialog)
+
+    def run_task_action(self, task_id, operation, *, source=None, expected=None, expected_details=None):
+        from desktop.task_context import action_reason
+        from desktop.learning_ui import StepsDialog
+        from shiboken6 import isValid
+        def run():
+            row=next((r for r in self.store.tasks() if r['id']==task_id),None)
+            if row is None:
+                raise ValueError('任务已被删除，请刷新列表后重新选择。')
+            if reason := action_reason(self.store,row,operation,self):
+                raise ValueError(reason)
+            if operation=='focus':
+                self.start_focus_for_task(task_id)
+            elif operation=='delete':
+                self.delete_task_id(task_id,expected=expected,expected_details=expected_details)
+                if source is not None and source is not self and isValid(source) and hasattr(source,'refresh'):
+                    source.refresh()
+            elif operation=='ai_modify':
+                self.modify_plan(plan_id=row['plan_id'],task_ids=[task_id])
+            elif operation=='steps':
+                def changed(_):
+                    self.refresh()
+                    if source is not None and source is not self and isValid(source) and hasattr(source,'refresh'):
+                        source.refresh()
+                self.tools.open(('steps',task_id),lambda: StepsDialog(self.store,task_id,self),changed)
+            else:
+                if operation not in ('edit','due','status','note','reminder','ai_locked'):
+                    raise ValueError('无法识别这项任务操作，请重新打开菜单。')
+                dialog=self.edit_task_id(task_id,field=None if operation=='edit' else operation)
+                if dialog is not None and source is not None and source is not self and isValid(source) and hasattr(source,'refresh'):
+                    # Only one refresh hook per source/editor; reusing a window keeps unsaved edits.
+                    sources=getattr(dialog,'_context_sources',set())
+                    if id(source) not in sources:
+                        sources.add(id(source))
+                        dialog._context_sources=sources
+                        dialog.finished.connect(lambda _: source.refresh() if isValid(source) else None)
+        self.safe(run)
+
+    def delete_task_id(self, task_id, *, expected=None, expected_details=None):
+        from shiboken6 import isValid
+        row=next((r for r in self.store.tasks() if r['id']==task_id),None)
+        if row is None or not row.get('manual'):
+            raise ValueError('此入口只支持删除仍存在的手动任务。')
+        if expected is not None and row!=expected:
+            raise ValueError('任务已有新变化，请重新打开菜单核对后再删除。')
+        details=self.store.read('SELECT stage,steps_json FROM task_details WHERE task_id=?',(task_id,))
+        if expected_details is not None and details!=expected_details:
+            raise ValueError('任务分组或步骤已有新变化，请重新打开菜单核对后再删除。')
+        if row.get('focus_active') or self.store.setting('focus_state',{}).get('task_id')==task_id:
+            raise ValueError('请先结束关联的专注，再删除任务。')
+        if any((w:=self.tools.windows.get((kind,task_id))) is not None and isValid(w) for kind in ('task','steps')):
+            raise ValueError('请先关闭这项任务的编辑或步骤窗口，再删除，避免丢失未保存内容。')
+        box=ConfirmationDialog('删除这项手动任务？',row['task'].title,self,
+            note='任务及其专注、笔记、执行步骤和提醒记录会移入回收站，可在30天内恢复。其他任务不变。默认取消；删除前的每日备份仍保留。',
+            confirm='删除这项任务',cancel='取消，保留任务')
+        if box.exec()!=QDialog.DialogCode.Accepted:
+            return
+        current=next((r for r in self.store.tasks() if r['id']==task_id),None)
+        if current!=row or details!=self.store.read('SELECT stage,steps_json FROM task_details WHERE task_id=?',(task_id,)):
+            raise ValueError('确认期间任务已有新记录或修改，未删除。请刷新后重试。')
+        self.store.delete_manual_task(task_id)
+        self.refresh()
+        self.notice.setText('手动任务已移入回收站，可在30天内恢复。入口：计划库 → 历史与数据 → 回收站。')
+
+    def open_trash(self):
+        from desktop.trash_ui import TrashDialog
+        self.tools.open('trash', lambda: TrashDialog(self.store, self, changed=self.refresh))
 
     def add_manual_task(self, plan_id=None):
         from desktop.manual_tasks import ManualTaskDialog
-        dialog = ManualTaskDialog(self.store, self, plan_id=plan_id)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
+        def finished(result):
             self.refresh()
-            self.notice.setText("任务已添加。今日页显示今天和逾期任务；未来任务可在周视图查看。")
+            if result == QDialog.DialogCode.Accepted:
+                self.notice.setText("任务已添加。今日页显示今天和逾期任务；未来任务可在周视图查看。")
+        self.tools.open(("manual", plan_id), lambda: ManualTaskDialog(self.store, self, plan_id=plan_id), finished)
+
+    def open_statistics(self):
+        from desktop.learning_ui import StatisticsDialog
+        self.tools.open("statistics", lambda: StatisticsDialog(self.store, self))
+
+    def open_recurring(self):
+        from desktop.learning_ui import RecurringDialog
+        self.tools.open("recurring", lambda: RecurringDialog(self.store, self), lambda _: self.refresh())
+
+    def open_structure(self):
+        from desktop.learning_ui import StructureDialog
+        if self.selected_plan_id or self.library_standalone:
+            pid = self.selected_plan_id
+            self.tools.open(("structure", pid), lambda: StructureDialog(self.store, pid, self), lambda _: self.refresh())
+
+    def open_steps(self, item):
+        from desktop.learning_ui import StepsDialog
+        if item is None:
+            self.notice.setText("先在任务列表选择一项任务，再管理它的执行步骤。")
+            return
+        tid = item.data(0, Qt.ItemDataRole.UserRole)
+        self.tools.open(("steps", tid), lambda: StepsDialog(self.store, tid, self), lambda _: self.refresh())
 
     def refresh_focus_status(self):
         """Update live labels without rebuilding tables or losing selections."""
@@ -912,11 +1139,24 @@ class MainWindow(QMainWindow):
     def rename_selected(self):
         if not self.selected_plan_id:
             return
-        old = self.store.get_plan(self.selected_plan_id)["title"]
-        text, ok = QInputDialog.getText(self, "重命名计划", "计划名称", text=old)
-        if ok:
-            self.safe(lambda: self.store.rename_plan(self.selected_plan_id, text))
-            self.refresh()
+        pid = self.selected_plan_id
+        if self.tools.existing(('rename', pid)):
+            return
+        saved = self.store.get_plan(pid)
+        dialog = QInputDialog()
+        dialog.setWindowTitle('重命名计划 · 学习罗盘')
+        dialog.setLabelText('计划名称')
+        dialog.setTextValue(saved['title'])
+        dialog.setOkButtonText('保存名称')
+        dialog.setCancelButtonText('取消')
+        dialog.resize(520, 180)
+        def finished(result):
+            if result == QDialog.DialogCode.Accepted:
+                if self.store.get_plan(pid)['revision'] != saved['revision']:
+                    raise ValueError('计划已有变化，请重新打开重命名窗口；未覆盖新内容。')
+                self.store.rename_plan(pid, dialog.textValue())
+                self.refresh()
+        self.tools.show(dialog, ('rename', pid), finished)
 
     def archive_selected(self):
         if self.selected_plan_id:
@@ -946,7 +1186,7 @@ class MainWindow(QMainWindow):
             if self.selected_plan_id == plan_id:
                 self.selected_plan_id = None
             self.refresh()
-            self.notice.setText(f"计划已删除，其他计划未受影响。删除前备份：{backup.name}")
+            self.notice.setText(f"计划已移入回收站，可在30天内恢复。入口：历史与数据 → 回收站。删除前备份：{backup.name}")
         self.safe(remove)
 
     def review_selected(self):
@@ -960,24 +1200,21 @@ class MainWindow(QMainWindow):
             final = len(reviews) == saved["profile"].plan_weeks - 1
             gateway = None if final else self.gateway()
             def done(preview):
-                if PreviewDialog(preview, saved["plan"], self).exec() == QDialog.DialogCode.Accepted:
-                    self.store.apply_review(plan_id, preview["week"], preview["summary"], preview["adjusted"], preview["revision"], preview["provenance"])
-                    self.refresh()
-                    self.notice.setText("复盘已保存，后续任务已更新。")
+                dialog = PreviewDialog(preview, saved["plan"], self)
+                def apply(result):
+                    if result == QDialog.DialogCode.Accepted:
+                        self.store.apply_review(plan_id, preview["week"], preview["summary"], preview["adjusted"], preview["revision"], preview["provenance"])
+                        self.refresh()
+                        self.notice.setText("复盘已保存，后续任务已更新。")
+                self.tools.show(dialog, ("review", plan_id), apply)
             self.start_work("正在整理复盘与调整预览…", lambda cancel: prepare_review(self.store, plan_id, gateway, cancelled=cancel), done, gateway)
         self.safe(begin)
 
     def undo_selected(self):
         if self.selected_plan_id:
             def show():
-                previous = getattr(self, "history_replay_window", None)
-                if previous and previous.isVisible() and previous.plan_id == self.selected_plan_id:
-                    previous.showNormal()
-                    previous.raise_()
-                    previous.activateWindow()
-                    return
-                self.history_replay_window = PlanHistoryWindow(self, self.selected_plan_id)
-                self.history_replay_window.show()
+                pid = self.selected_plan_id
+                self.history_replay_window = self.tools.open(("history", pid), lambda: PlanHistoryWindow(self, pid))
             self.safe(show)
 
     def export_selected(self):
@@ -1058,8 +1295,13 @@ class MainWindow(QMainWindow):
 
     def edit_connection(self, new=False):
         config = None if new else self.selected_connection()
+        key_id = ("connection", config.id if config else None)
+        if self.tools.existing(key_id):
+            return
         dialog = ConnectionDialog(config, bool(config and self.credentials.get(config.id)), self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
+        def finished(result):
+            if result != QDialog.DialogCode.Accepted:
+                return
             def action():
                 updated = dialog.config()
                 key = dialog.key.text().strip() or (self.credentials.get(config.id) if config else "")
@@ -1071,6 +1313,7 @@ class MainWindow(QMainWindow):
                 self.store.set_setting("active_connection", updated.id)
                 self.refresh()
             self.safe(action)
+        self.tools.show(dialog, key_id, finished)
 
     def remove_connection(self):
         config = self.selected_connection()
@@ -1100,11 +1343,16 @@ class MainWindow(QMainWindow):
             def done(models):
                 if not models:
                     raise ValueError("服务未提供模型列表，请编辑配置并手动填写模型 ID。")
-                name, ok = choose_model(models, self)
-                if ok and name.strip():
-                    updated = config.model_copy(update={"model": name.strip()})
-                    self.store.save_connection(updated)
-                    self.refresh()
+                dialog = ModelSelectionDialog(models, self)
+                def selected(result):
+                    if result == QDialog.DialogCode.Accepted and dialog.model.currentText().strip():
+                        current = next((c for c in self.store.connections() if c.id == config.id), None)
+                        if current != config:
+                            raise ValueError('连接配置已改变，请重新获取模型列表。')
+                        updated = config.model_copy(update={"model": dialog.model.currentText().strip()})
+                        self.store.save_connection(updated)
+                        self.refresh()
+                self.tools.show(dialog, ('models', config.id), selected)
             self.start_work("正在获取服务商模型列表…", lambda cancel: gateway.list_models(cancelled=cancel), done, gateway, timeout_seconds=MODELS_TIMEOUT)
         self.safe(action)
 
@@ -1120,6 +1368,9 @@ class MainWindow(QMainWindow):
 
     def start_focus(self):
         def action():
+            if self.focus_task.currentData() and self.focus.phase == 'focus' and not self.focus.session_id:
+                self.start_focus_for_task(self.focus_task.currentData())
+                return
             self.focus.configure(self.focus_minutes.value(), self.break_minutes.value())
             self.focus.start(self.focus_task.currentData())
             self.tick()
@@ -1140,7 +1391,9 @@ class MainWindow(QMainWindow):
             self.refresh_focus_tasks()
             self.focus_task.setCurrentIndex(self.focus_task.findData(task_id))
             if not same:
-                self.focus.configure(self.focus_minutes.value(), self.break_minutes.value())
+                minutes = row['task'].duration_minutes
+                self.focus_minutes.setValue(minutes)
+                self.focus.configure(minutes, self.break_minutes.value())
             self.focus.start(task_id)
             self.navigate(3)
             self.tick()
@@ -1203,6 +1456,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "未能设置", "无法修改当前用户的开机启动设置。")
 
     def quit_app(self):
+        if not self.tools.close_all():
+            return
         if self.planning_window and not self.planning_window.closed:
             if not self.planning_window.close():
                 return
@@ -1223,6 +1478,9 @@ class MainWindow(QMainWindow):
                 self.tray.showMessage("学习罗盘仍在运行", "提醒和计时会继续。从右下角托盘菜单选择“完全退出”可停止软件。")
                 self.store.set_setting("tray_explained", True)
         else:
+            if not self.tools.close_all():
+                event.ignore()
+                return
             if self.planning_window and not self.planning_window.closed:
                 if not self.planning_window.close():
                     event.ignore()

@@ -161,7 +161,7 @@ def test_window_more_menu_and_captured_plan_id(window, monkeypatch, accept):
     window.refresh()
     window.selected_plan_id = pid
     assert not any(b.text() == "删除" for b in window.stack.widget(1).findChildren(QPushButton))
-    assert window.plan_more_button.text() == "更多操作"
+    assert window.plan_more_button.text() == "计划管理  ▾"
     assert window.delete_plan_action.text() == "删除计划…"
     def respond(d):
         assert store.get_plan(pid)["title"] in "\n".join(w.text() for w in d.findChildren(QLabel))

@@ -13,7 +13,7 @@ from desktop.ui import readable_document, format_reading_blocks
 CHAPTERS = {
     "quickstart": "首次体验", "models": "接入自己的模型", "create": "创建学习计划",
     "modify": "修改与保护计划", "schedule": "补排与计划暂停", "budget": "学习时间预算", "records": "记录与每周复盘", "focus": "专注与提醒",
-    "backup": "数据与备份", "errors": "常见问题", "build": "从源码运行与构建",
+    "tools": "统计、子任务与周期复习", "trash": "回收站与恢复", "backup": "数据与备份", "errors": "常见问题", "build": "从源码运行与构建",
 }
 
 
@@ -167,7 +167,7 @@ def open_guide(owner, chapter=None):
     owner._guide_window = app._learning_guide
     app._learning_guide._owners.add(owner)
     modal = app.activeModalWidget()
-    if modal is None and isinstance(owner, QDialog) and owner.isVisible():
+    if modal is None and isinstance(owner, QDialog) and owner.isVisible() and owner.isModal():
         modal = owner
     app._learning_guide.set_context(modal if modal is not app._learning_guide else None)
     app._learning_guide.go(chapter)

@@ -213,7 +213,7 @@ def test_guide_above_source_window_and_independent_after_close(qtbot, modal):
     try:
         app.processEvents()
         assert guide.parentWidget() is None
-        assert guide.windowHandle().transientParent() is source.windowHandle()
+        assert guide.windowHandle().transientParent() is (source.windowHandle() if modal else None)
         assert guide.isVisible()
         if app.platformName() == "windows":
             qtbot.waitUntil(guide.isActiveWindow, timeout=3000)
@@ -222,7 +222,7 @@ def test_guide_above_source_window_and_independent_after_close(qtbot, modal):
             user32 = ctypes.windll.user32
             user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
             user32.GetWindow.restype = wintypes.HWND
-            assert user32.GetWindow(int(guide.winId()), 4) == int(source.winId())
+            assert user32.GetWindow(int(guide.winId()), 4) == (int(source.winId()) if modal else None)
         guide.search.setFocus()
         qtbot.keyClicks(guide.search, "focus")
         assert guide.search.text() == "focus"

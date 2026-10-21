@@ -278,7 +278,7 @@ def test_migration_old_backup_and_v2_json_source_are_preserved(tmp_path):
     before = hashlib.sha256(old_backup.read_bytes()).digest()
     migrated = Store(source.directory)
     assert migrated.tasks(pid)[0]["ai_locked"]
-    assert list(migrated.backups.glob("before-schema-5-*.sqlite3"))
+    assert list(migrated.backups.glob("before-schema-7-*.sqlite3"))
     target = Store(tmp_path / "restored")
     target.restore(old_backup)
     assert target.tasks(pid)[0]["task"].title == "旧手动任务"
@@ -302,7 +302,7 @@ def test_failed_migration_never_changes_original_database(tmp_path, monkeypatch)
         Store(source.directory)
     assert source.path.read_bytes() == before
     assert not list(source.directory.glob("upgrade-*.sqlite3"))
-    assert list(source.backups.glob("before-schema-5-*.sqlite3"))
+    assert list(source.backups.glob("before-schema-7-*.sqlite3"))
 
 
 @pytest.mark.parametrize("area", ["brief", "history"])
@@ -335,7 +335,7 @@ def test_backup_restores_drafts_versions_and_new_export_brief(tmp_path):
     assert store.drafts()[0].outline == outline()
     assert len(store.versions(pid)) == 2
     exported = store.export_plan(pid)
-    assert json.loads(exported)["version"] == 5
+    assert json.loads(exported)["version"] == 6
     assert b"api_key" not in exported
     event = store.planning_event(d.id, "mock", {"api_key": "MUST-NOT-SAVE", "model": "mock", "metrics": {"input_tokens": 3, "secret": "MUST-NOT-SAVE"}})
     assert "MUST-NOT-SAVE" not in json.dumps(event)

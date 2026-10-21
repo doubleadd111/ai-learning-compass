@@ -200,7 +200,7 @@ def test_old_database_and_backup_migrate_without_mutation(tmp_path, schema):
     target.restore(backup)
     assert target.export_plan(pid) == migrated.export_plan(pid)
     assert backup.read_bytes() == before
-    assert list(migrated.backups.glob("before-schema-5-*.sqlite3"))
+    assert list(migrated.backups.glob("before-schema-7-*.sqlite3"))
 
 
 def test_schema_four_failure_preserves_database(tmp_path, monkeypatch):

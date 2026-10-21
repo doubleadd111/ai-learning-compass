@@ -59,6 +59,7 @@ def ui(qtbot, tmp_path, monkeypatch):
     for row, day in zip(rows, (12, 14, 16, 19)):
         edit(window.store, row, due_date=f"2026-10-{day}",
              payload=row["task"].model_copy(update={"duration_minutes": 15}))
+    window.selected_plan_id = pid  # Select the plan, not the new fixed inbox.
     window.refresh()
     yield window, pid, clock
     window.exiting = True
@@ -148,13 +149,12 @@ def test_filtered_task_focus_and_edit_still_use_stable_id(ui, monkeypatch, qtbot
     panel.render()
     qtbot.mouseClick(panel.table.itemWidget(panel.table.topLevelItem(0), 6), Qt.MouseButton.LeftButton)
     assert called == [task_id]
-    def complete():
-        dialog = QApplication.activeModalWidget()
-        assert "逾期" not in [dialog.status.itemText(i) for i in range(dialog.status.count())]
-        dialog.status.setCurrentText("已完成")
-        dialog.accept()
-    QTimer.singleShot(0, complete)
     window.edit_task_id(task_id)
+    dialog = window.tools.windows[('task', task_id)]
+    assert "逾期" not in [dialog.status.itemText(i) for i in range(dialog.status.count())]
+    assert not dialog.isModal()
+    dialog.status.setCurrentText("已完成")
+    dialog.accept()
     assert task_id not in {r["id"] for r in panel.rows}
 
 

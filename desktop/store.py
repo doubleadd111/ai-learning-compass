@@ -15,7 +15,7 @@ from progress_store import StudyRepository, TaskProgress
 from desktop.models import DesktopProfile, ModelConnection, new_id, schedule_dates
 
 APP_ID = 0x4C434D50
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 7
 
 
 def now() -> str:
@@ -49,9 +49,9 @@ class Store:
     def _initialize(self):
         with closing(self.connect()) as probe:
             old_version = probe.execute("PRAGMA user_version").fetchone()[0]
-            if old_version in (1, 2, 3, 4, 5) and probe.execute("PRAGMA application_id").fetchone()[0] != APP_ID:
+            if old_version in (1, 2, 3, 4, 5, 6, 7) and probe.execute("PRAGMA application_id").fetchone()[0] != APP_ID:
                 raise ValueError("不是学习罗盘桌面数据库")
-        if old_version in (1, 2, 3, 4):
+        if old_version in (1, 2, 3, 4, 5, 6):
             self.backup_to(self.backups / f"before-schema-{SCHEMA_VERSION}-{new_id()}.sqlite3")
             staged_path = self.directory / f"upgrade-{new_id()}.sqlite3"
             try:
@@ -64,7 +64,11 @@ class Store:
                     if old_version <= 3:
                         self._upgrade_v4(staged)
                     staged.commit()
-                    self._upgrade_v5(staged)
+                    if old_version <= 4:
+                        self._upgrade_v5(staged)
+                    if old_version <= 5:
+                        self._upgrade_v6(staged)
+                    self._upgrade_v7(staged)
                 self.inspect_backup(staged_path)
                 os.replace(staged_path, self.path)
             finally:
@@ -120,6 +124,8 @@ class Store:
             self._upgrade_v4(c)
             c.commit()
             self._upgrade_v5(c)
+            self._upgrade_v6(c)
+            self._upgrade_v7(c)
         c.close()
 
     @staticmethod
@@ -206,6 +212,29 @@ class Store:
                 c.execute("PRAGMA user_version=5")
         finally:
             c.execute("PRAGMA foreign_keys=ON")
+
+    @staticmethod
+    def _upgrade_v6(c):
+        if not c.in_transaction:
+            c.execute("BEGIN IMMEDIATE")
+        c.execute("""CREATE TABLE IF NOT EXISTS task_details (task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+                     stage TEXT NOT NULL, steps_json TEXT NOT NULL)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS task_series (id TEXT PRIMARY KEY,
+                     plan_id TEXT REFERENCES plans(id) ON DELETE CASCADE, payload_json TEXT NOT NULL,
+                     rule_json TEXT NOT NULL, remind_at TEXT, stopped INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS series_tasks (series_id TEXT REFERENCES task_series(id) ON DELETE CASCADE,
+                     scheduled_date TEXT NOT NULL, task_id TEXT UNIQUE REFERENCES tasks(id) ON DELETE SET NULL,
+                     PRIMARY KEY(series_id,scheduled_date))""")
+        c.execute("PRAGMA user_version=6")
+
+    @staticmethod
+    def _upgrade_v7(c):
+        if not c.in_transaction:
+            c.execute("BEGIN IMMEDIATE")
+        c.execute("""CREATE TABLE IF NOT EXISTS trash (id TEXT PRIMARY KEY, kind TEXT NOT NULL,
+                  entity_id TEXT NOT NULL, title TEXT NOT NULL, deleted_at TEXT NOT NULL,
+                  expires_at TEXT NOT NULL, snapshot_json TEXT NOT NULL)""")
+        c.execute("PRAGMA user_version=7")
 
     def _daily_backup(self):
         today = date.today().isoformat()
@@ -490,6 +519,8 @@ class Store:
             # BEGIN IMMEDIATE blocks competing writes. The backup reads the
             # committed database through a separate connection before deletion.
             backup = self.manual_backup("before-delete-plan")
+            from desktop.trash import capture_plan
+            capture_plan(c, plan_id)
             c.execute("DELETE FROM focus_sessions WHERE task_id IN (SELECT id FROM tasks WHERE plan_id=?)", (plan_id,))
             c.execute("DELETE FROM generation_events WHERE plan_id=?", (plan_id,))
             c.execute("DELETE FROM plans WHERE id=?", (plan_id,))
@@ -531,6 +562,8 @@ class Store:
             if state and json.loads(state[0]).get("task_id") == task_id:
                 raise ValueError("请先结束关联的专注，再删除任务")
             before = self._snapshot_in_transaction(c, task["plan_id"]) if task["plan_id"] else None
+            from desktop.trash import capture_task
+            capture_task(c, task_id)
             c.execute("DELETE FROM focus_sessions WHERE task_id=?", (task_id,))
             c.execute("DELETE FROM tasks WHERE id=?", (task_id,))
             if task["plan_id"]:
@@ -546,8 +579,11 @@ class Store:
         if remind_at is not None:
             datetime.strptime(remind_at, "%H:%M")
         TaskProgress(status=status, actual_minutes=manual_minutes, difficulty=difficulty, note=note)
-        if status == "未开始" and task["focus_seconds"] > 0:
-            status = "进行中"
+        if status == "未开始":
+            from desktop.learning_tools import task_details
+            details, _ = task_details(self, task_id)
+            if task["focus_seconds"] > 0 or any(s['done'] for s in details['steps']):
+                status = "进行中"
         if task["manual"]:
             if payload.day != 1:
                 raise ValueError("手动任务不使用学习日编号")
@@ -617,12 +653,14 @@ class Store:
 
     @staticmethod
     def _snapshot_in_transaction(c, plan_id):
-        result = {"format": "learning-compass-plan", "version": 5}
-        for table in ("plans", "weeks", "tasks", "reviews", "generation_events", "focus_sessions", "notifications", "plan_briefs", "plan_schedules", "pause_history"):
+        result = {"format": "learning-compass-plan", "version": 6}
+        for table in ("plans", "weeks", "tasks", "reviews", "generation_events", "focus_sessions", "notifications", "plan_briefs", "plan_schedules", "pause_history", "task_details", "task_series", "series_tasks"):
             if table == "plans":
                 rows = c.execute("SELECT * FROM plans WHERE id=?", (plan_id,)).fetchall()
-            elif table in {"focus_sessions", "notifications"}:
+            elif table in {"focus_sessions", "notifications", "task_details"}:
                 rows = c.execute(f"SELECT * FROM {table} WHERE task_id IN (SELECT id FROM tasks WHERE plan_id=?)", (plan_id,)).fetchall()
+            elif table == "series_tasks":
+                rows = c.execute("SELECT * FROM series_tasks WHERE series_id IN (SELECT id FROM task_series WHERE plan_id=?)", (plan_id,)).fetchall()
             else:
                 rows = c.execute(f"SELECT * FROM {table} WHERE plan_id=?", (plan_id,)).fetchall()
             result[table] = [dict(row) for row in rows]
@@ -781,7 +819,9 @@ class Store:
             for task in snapshot["tasks"]:
                 task["manual"] = 0
             snapshot["version"] = 5
-        if snapshot.get("version") != 5:
+        if snapshot.get("version") == 5:
+            snapshot.update(version=6, task_details=[], task_series=[], series_tasks=[])
+        if snapshot.get("version") != 6:
             raise ValueError("计划文件版本不受支持")
         return snapshot
 
@@ -789,23 +829,32 @@ class Store:
     def _insert_snapshot(c, snapshot, *, new_ids=False):
         snapshot = json.loads(json.dumps(snapshot))
         Store._normalize_snapshot(snapshot)
+        from desktop.learning_tools import validate_snapshot_extras
+        validate_snapshot_extras(snapshot)
         if new_ids:
             plan_id = new_id()
             task_ids = {r["id"]: new_id() for r in snapshot["tasks"]}
+            series_ids = {r["id"]: new_id() for r in snapshot["task_series"]}
             snapshot["plans"][0]["id"] = plan_id
-            for table in ("weeks", "tasks", "reviews", "generation_events", "plan_briefs", "plan_schedules", "pause_history"):
+            for table in ("weeks", "tasks", "reviews", "generation_events", "plan_briefs", "plan_schedules", "pause_history", "task_series"):
                 for row in snapshot[table]:
                     row["plan_id"] = plan_id
                     if table == "tasks":
                         row["id"] = task_ids[row["id"]]
+                    elif table == "task_series":
+                        row["id"] = series_ids[row["id"]]
                     elif table in {"generation_events", "pause_history"}:
                         row["id"] = new_id()
-            for table in ("focus_sessions", "notifications"):
+            for table in ("focus_sessions", "notifications", "task_details"):
                 for row in snapshot[table]:
                     row["task_id"] = task_ids[row["task_id"]]
                     if table == "focus_sessions":
                         row["id"] = new_id()
-        for table in ("plans", "weeks", "tasks", "reviews", "generation_events", "focus_sessions", "notifications", "plan_briefs", "plan_schedules", "pause_history"):
+            for row in snapshot["series_tasks"]:
+                row["series_id"] = series_ids[row["series_id"]]
+                if row["task_id"] is not None:
+                    row["task_id"] = task_ids[row["task_id"]]
+        for table in ("plans", "weeks", "tasks", "reviews", "generation_events", "focus_sessions", "notifications", "plan_briefs", "plan_schedules", "pause_history", "task_details", "task_series", "series_tasks"):
             for row in snapshot[table]:
                 if table == "plan_briefs":
                     from desktop.planning import validate_brief
@@ -825,7 +874,7 @@ class Store:
             data = json.loads(content.decode("utf-8-sig"))
             if data.get("version") == 1:
                 return self._import_legacy_json(data, start, weekdays)
-            if data.get("format") != "learning-compass-plan" or data.get("version") not in {2, 3, 4, 5} or len(data["plans"]) != 1:
+            if data.get("format") != "learning-compass-plan" or data.get("version") not in {2, 3, 4, 5, 6} or len(data["plans"]) != 1:
                 raise ValueError("不是有效的学习罗盘计划文件")
             # 同一事务中验证领域约束；任何失败都会回滚整份导入。
             with self.write(confirm_plan_limits=confirm_limits) as c:
@@ -1089,7 +1138,7 @@ class Store:
         c.row_factory = sqlite3.Row
         try:
             version = c.execute("PRAGMA user_version").fetchone()[0]
-            if c.execute("PRAGMA application_id").fetchone()[0] != APP_ID or version not in {1, 2, 3, 4, SCHEMA_VERSION}:
+            if c.execute("PRAGMA application_id").fetchone()[0] != APP_ID or version not in {1, 2, 3, 4, 5, 6, SCHEMA_VERSION}:
                 raise ValueError("不是当前版本的学习罗盘备份")
             if c.execute("PRAGMA integrity_check").fetchone()[0] != "ok" or c.execute("PRAGMA foreign_key_check").fetchall():
                 raise ValueError("备份不完整或已损坏")
@@ -1117,6 +1166,13 @@ class Store:
                     TaskProgress(status=task["status"], actual_minutes=0, difficulty=task["difficulty"], note=task["note"])
                     if task["manual_seconds"] < 0 or task["focus_seconds"] < 0:
                         raise ValueError("手动任务用时不能为负数")
+            if version >= 6:
+                from desktop.learning_tools import validate_database_extras
+                validate_database_extras(c)
+            if version >= 7:
+                from desktop.trash import validate_entry
+                for entry in c.execute("SELECT * FROM trash"):
+                    validate_entry(c, dict(entry))
             for row in c.execute("SELECT data_json FROM connections"):
                 ModelConnection.model_validate_json(row["data_json"])
             if version >= 4:
@@ -1147,6 +1203,8 @@ class Store:
                         Store._normalize_snapshot(snapshot)
                         if snapshot.get("format") != "learning-compass-plan" or len(snapshot["plans"]) != 1 or snapshot["plans"][0]["id"] != row["plan_id"]:
                             raise ValueError("历史所属计划不一致")
+                        from desktop.learning_tools import validate_snapshot_extras
+                        validate_snapshot_extras(snapshot)
                         for task in snapshot["tasks"]:
                             DailyTask.model_validate_json(task["payload_json"])
                             date.fromisoformat(task["due_date"])
@@ -1186,6 +1244,10 @@ class Store:
                 if staged.execute("PRAGMA user_version").fetchone()[0] == 4:
                     staged.commit()
                     self._upgrade_v5(staged)
+                if staged.execute("PRAGMA user_version").fetchone()[0] == 5:
+                    self._upgrade_v6(staged)
+                if staged.execute("PRAGMA user_version").fetchone()[0] == 6:
+                    self._upgrade_v7(staged)
             self.inspect_backup(temporary)
             os.replace(temporary, self.path)
         finally:

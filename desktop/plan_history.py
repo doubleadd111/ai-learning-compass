@@ -33,7 +33,9 @@ def arrangement(snapshot):
     return dict(plan={k: snapshot["plans"][0][k] for k in PLAN_FIELDS},
         tasks=sorted([{k: row[k] for k in ("id", "week", "day", "manual", *TASK_FIELDS)} for row in snapshot["tasks"]], key=lambda r: r["id"]),
         weeks=sorted(snapshot["weeks"], key=lambda r: r["number"]),
-        schedule=snapshot["plan_schedules"], briefs=snapshot["plan_briefs"])
+        schedule=snapshot["plan_schedules"], briefs=snapshot["plan_briefs"],
+        details=sorted([(r['task_id'], r['stage'], [(s['id'], s['title']) for s in json.loads(r['steps_json'])])
+                        for r in snapshot.get('task_details', []) if r['stage'] or json.loads(r['steps_json'])]))
 
 
 def _replay(store, c, plan_id, target):
@@ -85,6 +87,32 @@ def _replay(store, c, plan_id, target):
                          VALUES (?,?,0,NULL,1,?,?,?,?,?)""",
                       (tid, plan_id, row["payload_json"], row["due_date"], row["remind_at"], row["user_modified"], row["ai_locked"]))
             notices.append(f"恢复手动任务“{payload.title}”的内容和日期；不从历史填回已删除的学习记录")
+    from desktop.learning_tools import details_in, validate_details
+    target_details = {r['task_id']: r for r in target.get('task_details', [])}
+    for tid in target_tasks:
+        if not c.execute('SELECT 1 FROM tasks WHERE id=?', (tid,)).fetchone():
+            continue
+        old = details_in(c, tid)
+        row = target_details.get(tid)
+        desired = dict(stage=row['stage'], steps=json.loads(row['steps_json'])) if row else dict(stage='', steps=[])
+        validate_details(desired)
+        if target_tasks[tid]['week'] in reviewed and not target_tasks[tid]['manual']:
+            continue
+        current_steps = {s['id']: s for s in old['steps']}
+        steps = [dict(s, done=current_steps.get(s['id'], {}).get('done', False)) for s in desired['steps']]
+        target_ids = {s['id'] for s in steps}
+        for step in old['steps']:
+            if step['done'] and step['id'] not in target_ids:
+                steps.append(step)
+                notices.append('保留已打卡的子任务：' + step['title'])
+        validate_details(dict(stage=desired['stage'], steps=steps))
+        if desired['stage'] or steps:
+            c.execute('INSERT INTO task_details VALUES (?,?,?) ON CONFLICT(task_id) DO UPDATE SET stage=excluded.stage,steps_json=excluded.steps_json',
+                      (tid, desired['stage'], json.dumps(steps, ensure_ascii=False)))
+        else:
+            c.execute('DELETE FROM task_details WHERE task_id=?', (tid,))
+    if target.get('task_series') != current.get('task_series'):
+        notices.append('周期规则保持当前状态；本次仅回溯已生成任务的安排，不重新启动或扩增周期')
     plan = target["plans"][0]
     c.execute("UPDATE plans SET " + ",".join(f"{k}=?" for k in PLAN_FIELDS) + " WHERE id=?",
               (*[plan[k] for k in PLAN_FIELDS], plan_id))
@@ -173,6 +201,16 @@ def differences(before, after):
                 lines += ["修改意见：" + str(a.get("request", "")) for a in data.get("adjustments", [])]
                 return "\n".join(lines)
             result.append(dict(name=label, before=describe(before[table]), after=describe(after[table])))
+    old_details, new_details = ({r['task_id']: r for r in s.get('task_details', [])} for s in (before, after))
+    for tid in sorted(old_details.keys() | new_details.keys()):
+        def describe_detail(row):
+            if not row:
+                return '未分组，没有执行步骤'
+            return '分组：' + (row['stage'] or '未分组') + '\n' + '\n'.join(s['title'] for s in json.loads(row['steps_json']))
+        a, b = describe_detail(old_details.get(tid)), describe_detail(new_details.get(tid))
+        if a != b:
+            task = new.get(tid) or old.get(tid)
+            result.append(dict(name=(json.loads(task['payload_json'])['title'] if task else '任务') + ' · 阶段与子任务', before=a, after=b))
     return result
 
 

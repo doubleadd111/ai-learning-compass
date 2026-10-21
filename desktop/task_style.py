@@ -1,12 +1,13 @@
 """Accessible overdue badges shared by the task lists and weekly table."""
-from PySide6.QtCore import QRect, Qt
-from PySide6.QtGui import QBrush, QColor, QPalette, QPainter
+from PySide6.QtCore import QRect, Qt, QSize
+from PySide6.QtGui import QBrush, QColor, QPalette, QPainter, QFont
 from PySide6.QtWidgets import QApplication, QStyle, QStyledItemDelegate
 
 from desktop.task_status import overdue_days
 
 OVERDUE_ROLE = Qt.ItemDataRole.UserRole + 31
 FOCUS_ROLE = Qt.ItemDataRole.UserRole + 32
+SEARCH_MATCH_ROLE = Qt.ItemDataRole.UserRole + 33
 
 
 def focus_tooltip(task):
@@ -35,7 +36,13 @@ class TaskItemDelegate(QStyledItemDelegate):
         if index.column() == self.status_column and seconds:
             from desktop.focus_tip import focus_tips
             anchor = QRect(view.viewport().mapToGlobal(option.rect.topLeft()), option.rect.size())
-            focus_tips().show(seconds, event.globalPos(), anchor)
+            focus_tips().show(seconds, event.globalPos(), anchor, view.viewport())
+            return True
+        from desktop.task_tip import TASK_TIP_ROLE
+        if index.column() == 0 and (payload := index.data(TASK_TIP_ROLE)):
+            from desktop.focus_tip import focus_tips
+            anchor = QRect(view.viewport().mapToGlobal(option.rect.topLeft()), option.rect.size())
+            focus_tips().show_task(payload, event.globalPos(), anchor, view.viewport())
             return True
         return super().helpEvent(event, view, option, index)
 
@@ -58,6 +65,46 @@ class TaskItemDelegate(QStyledItemDelegate):
                 option.palette.setColor(QPalette.ColorRole.HighlightedText, QColor(colour))
 
     def paint(self, painter, option, index):
+        summary = index.data(SEARCH_MATCH_ROLE) if index.column() == 0 else None
+        if not summary:
+            return self.paint_content(painter, option, index)
+        from PySide6.QtWidgets import QStyleOptionViewItem
+        from PySide6.QtGui import QFont, QFontMetrics
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        opt.text = ''
+        style = opt.widget.style() if opt.widget else QApplication.style()
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
+        font = QFont(opt.font)
+        font.setPixelSize(12)
+        font.setBold(False)
+        metrics = QFontMetrics(font)
+        extra = metrics.height() + 6
+        top = QStyleOptionViewItem(option)
+        top.rect.setHeight(max(24, option.rect.height()-extra))
+        self.paint_content(painter, top, index)
+        rect = style.subElementRect(QStyle.SubElement.SE_ItemViewItemText, opt, opt.widget)
+        rect.setTop(top.rect.bottom()+2)
+        rect.setBottom(option.rect.bottom()-4)
+        painter.save()
+        painter.setClipRect(option.rect)
+        painter.setFont(font)
+        colours = QApplication.instance().property('dropdownColors') or {}
+        painter.setPen(QColor(colours.get('muted', '#68758A')))
+        painter.drawText(rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            metrics.elidedText(summary, Qt.TextElideMode.ElideRight, max(0, rect.width())))
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        size = super().sizeHint(option, index)
+        if index.column() == 0 and index.data(SEARCH_MATCH_ROLE):
+            from PySide6.QtGui import QFont, QFontMetrics
+            font = QFont(option.font)
+            font.setPixelSize(12)
+            return QSize(size.width(), size.height()+QFontMetrics(font).height()+6)
+        return size
+
+    def paint_content(self, painter, option, index):
         days = index.data(OVERDUE_ROLE) or 0
         colours = QApplication.instance().property("overdueColors") or {}
         if index.column() != 0 or not days or not colours:
@@ -70,7 +117,7 @@ class TaskItemDelegate(QStyledItemDelegate):
         style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
         rect = style.subElementRect(QStyle.SubElement.SE_ItemViewItemText, opt, opt.widget)
         # Keep the badge visible even when long titles are elided in a narrow row.
-        font = opt.font
+        font = QFont(opt.font)
         font.setPixelSize(11)
         font.setBold(True)
         from PySide6.QtGui import QFontMetrics

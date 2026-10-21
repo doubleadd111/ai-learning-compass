@@ -35,7 +35,8 @@ def fingerprint(c):
     focus = json.loads(f[0]) if f else {}
     identity = {k: focus.get(k) for k in ("task_id", "session_id", "phase")}
     tasks = [tuple(r) for r in c.execute("SELECT * FROM tasks ORDER BY id")]
-    return hashlib.sha256(json.dumps([plans, schedules, budget[0] if budget else None, identity, tasks],
+    extras = [[tuple(r) for r in c.execute(f"SELECT * FROM {table} ORDER BY 1,2")] for table in ("task_details", "task_series", "series_tasks")]
+    return hashlib.sha256(json.dumps([plans, schedules, budget[0] if budget else None, identity, tasks, extras],
                                     ensure_ascii=False).encode()).hexdigest()
 
 

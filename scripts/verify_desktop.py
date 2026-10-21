@@ -43,10 +43,21 @@ def main():
         assert first["success"] and first["version"] == VERSION and first["pages"] == 5 and first["tasks"] == 6
         assert first["plan_deletion"]["success"]
         assert first["plan_history"]["success"]
+        assert first['learning_tools']['success']
+        assert first['workspace_windows']['success']
+        assert first['task_discovery']['success']
+        assert first['focus_search']['success']
+        assert first['search_scope']['success']
+        assert first['task_context']['success']
+        assert first['trash']['success']
         store = Store(data)
         row = store.tasks()[0]
         store.update_task(row["id"], row["task"], row["due_date"], row["remind_at"], "已完成", 12, 2, "冻结程序重启验证")
+        previous_result_stamp = (data / "smoke-result.json").stat().st_mtime_ns
         subprocess.run(command, env=environment, cwd=directory, timeout=90, check=True)
+        assert (data / "smoke-result.json").stat().st_mtime_ns > previous_result_stamp, '重启未生成新报告，不能沿用旧结果'
+        restarted = json.loads((data / "smoke-result.json").read_text(encoding="utf-8"))
+        assert restarted['success'] and restarted['trash']['explicit_task_date'] and restarted['trash']['readonly_detail']
         assert Store(data).tasks()[0]["note"] == "冻结程序重启验证"
         single_data = Path(directory) / "single"
         process = subprocess.Popen([str(executable), "--data-dir", str(single_data), "--minimized"], env=environment, cwd=directory)
@@ -68,6 +79,14 @@ def main():
                       offline_guide_packaged=True, clean_windows_vm=False)
         report["plan_deletion"] = first["plan_deletion"]
         report["plan_history"] = first["plan_history"]
+        report['learning_tools'] = first['learning_tools']
+        report['workspace_windows'] = first['workspace_windows']
+        report['task_discovery'] = first['task_discovery']
+        report['focus_search'] = first['focus_search']
+        report['search_scope'] = first['search_scope']
+        report['task_context'] = first['task_context']
+        report['trash'] = first['trash']
+        report['fresh_restart_report'] = True
         if args.input_scope:
             assert first['input_scope']['success']
             report['input_scope'] = first['input_scope']
@@ -83,6 +102,20 @@ def main():
             report["native_guide_window"] = native_report["native_guide_window"]
             report["modal_guide"] = native_report["modal_guide"]
             report["guide_lifecycle"] = native_report["guide_lifecycle"]
+            peers = native_report['workspace_windows']
+            assert peers['success'] and peers['relative_z_order_switches'] == 52
+            assert peers['foreground_switches'] + peers['background_activation_denied'] == 52
+            report['native_workspace_windows'] = native_report['workspace_windows']
+            assert native_report['task_discovery']['success']
+            report['native_task_discovery'] = native_report['task_discovery']
+            assert native_report['focus_search']['success']
+            report['native_focus_search'] = native_report['focus_search']
+            assert native_report['search_scope']['success']
+            report['native_search_scope'] = native_report['search_scope']
+            assert native_report['task_context']['success']
+            report['native_task_context'] = native_report['task_context']
+            assert native_report['trash']['success']
+            report['native_trash'] = native_report['trash']
             assert native_report["plan_deletion"]["success"]
             report["native_plan_deletion"] = native_report["plan_deletion"]
             assert native_report["plan_history"]["success"]

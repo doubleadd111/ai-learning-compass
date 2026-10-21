@@ -70,8 +70,9 @@ def test_guide_actual_spacing_indentation_and_code_preserved(ui):
     assert "python.exe" in guide.browser.toPlainText()
 
 
-def test_focus_buttons_bind_ids_continue_and_keep_settings(ui, qtbot):
+def test_focus_buttons_bind_ids_continue_and_use_task_duration(ui, qtbot):
     pid = create(ui.store)
+    ui.selected_plan_id = pid
     ui.refresh()
     rows = ui.store.tasks(pid)
     ui.focus_minutes.setValue(17)
@@ -82,7 +83,8 @@ def test_focus_buttons_bind_ids_continue_and_keep_settings(ui, qtbot):
     assert button.isVisible()
     qtbot.mouseClick(button, Qt.MouseButton.LeftButton)
     assert ui.stack.currentIndex() == 3 and ui.focus.task_id == rows[0]["id"]
-    assert ui.focus.focus_minutes == 17 and ui.focus.running
+    assert ui.focus.focus_minutes == rows[0]['task'].duration_minutes and ui.focus.running
+    assert ui.focus_minutes.value() == rows[0]['task'].duration_minutes
     session = ui.focus.session_id
     ui.focus.remaining -= 30
     remaining = ui.focus.remaining
@@ -127,6 +129,7 @@ def test_focus_from_break_starts_focus_not_break(ui, monkeypatch):
 
 def test_completed_and_archived_focus_buttons_disabled(ui):
     pid = create(ui.store)
+    ui.selected_plan_id = pid
     row = ui.store.tasks(pid)[0]
     edit(ui.store, row, status="已完成")
     ui.refresh()

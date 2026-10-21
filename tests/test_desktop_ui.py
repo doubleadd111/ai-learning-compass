@@ -5,7 +5,7 @@ import pytest
 pytest.importorskip("PySide6")
 pytest.importorskip("pytestqt")
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtCore import QThread
 from PySide6.QtWidgets import QApplication
 from desktop.credentials import CredentialStore
@@ -27,13 +27,13 @@ def test_desktop_sample_navigation_record_and_model_selection(qtbot, tmp_path):
     assert window.plan_tree.topLevelItemCount() == 6
     window.model_picker.setCurrentIndex(1)
     assert store.setting("active_connection") == configs[1].id
-    def fill_dialog():
-        dialog = QApplication.activeModalWidget()
-        dialog.status.setCurrentText("已完成")
-        dialog.note.setPlainText("桌面界面记录成功")
-        dialog.accept()
-    QTimer.singleShot(0, fill_dialog)
-    window.edit_tree_task(window.plan_tree.topLevelItem(0))
+    item = window.plan_tree.topLevelItem(0)
+    window.edit_tree_task(item)
+    dialog = window.tools.windows[('task', item.data(0, Qt.ItemDataRole.UserRole))]
+    assert not dialog.isModal() and QApplication.activeModalWidget() is None
+    dialog.status.setCurrentText("已完成")
+    dialog.note.setPlainText("桌面界面记录成功")
+    dialog.accept()
     assert store.progress(window.selected_plan_id)[(1, 1)].status == "已完成"
     for index in range(5):
         window.navigate(index)

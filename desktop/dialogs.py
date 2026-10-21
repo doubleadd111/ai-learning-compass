@@ -229,9 +229,10 @@ class ConnectionDialog(QDialog):
 
 
 class TaskDialog(QDialog):
-    def __init__(self, row, *, locked=False, parent=None):
+    def __init__(self, row, *, locked=False, parent=None, store=None):
         super().__init__(parent)
         self.row = row
+        self.store = store
         task = row["task"]
         self.setWindowTitle("学习任务与记录")
         self.resize(650, 700)
@@ -277,6 +278,29 @@ class TaskDialog(QDialog):
         tip.setObjectName("muted")
         tip.setWordWrap(True)
         layout.addWidget(tip)
+        if store is not None:
+            from PySide6.QtWidgets import QPushButton
+            steps_button = QPushButton("任务分组与执行步骤…")
+            def show_steps():
+                from desktop.learning_ui import StepsDialog
+                from desktop.tool_windows import open_tool
+                from shiboken6 import isValid
+                previous = self.row['status']
+                def finished(result):
+                    if not isValid(self) or result != QDialog.DialogCode.Accepted:
+                        return
+                    updated = next((t for t in store.tasks() if t['id'] == self.row['id']), None)
+                    if updated:
+                        # Steps only change these parent fields. Never adopt unrelated
+                        # peer-window edits into this editor's conflict baseline.
+                        if self.status.currentText() == previous:
+                            self.status.setCurrentText(updated['status'])
+                        for key in ('status', 'ai_locked', 'user_modified'):
+                            self.row[key] = updated[key]
+                        self.ai_locked.setChecked(bool(updated['ai_locked']))
+                open_tool(self, StepsDialog(store, self.row['id'], self), ('steps', self.row['id']), finished)
+            steps_button.clicked.connect(show_steps)
+            layout.addWidget(steps_button)
         if row.get("manual"):
             from PySide6.QtWidgets import QPushButton
             remove = QPushButton("删除这项手动任务…")
@@ -285,6 +309,11 @@ class TaskDialog(QDialog):
         if locked:
             for widget in (self.title, self.description, self.deliverable, self.duration, self.due, self.status):
                 widget.setEnabled(False)
+        self.save_error = QLabel('')
+        self.save_error.setWordWrap(True)
+        self.save_error.setObjectName('budgetWarning')
+        self.save_error.hide()
+        layout.addWidget(self.save_error)
         buttons(self, layout)
 
     def values(self):
@@ -302,6 +331,25 @@ class TaskDialog(QDialog):
         except ValueError:
             QMessageBox.warning(self, "请检查任务", "请填写完整的任务和产出，任务说明不超过 300 字，笔记不超过 500 字。")
             return
+        if self.store is not None:
+            from desktop.schedule_ui import budget_action
+            def save():
+                current = next((t for t in self.store.tasks() if t['id'] == self.row['id']), None)
+                if current is None:
+                    raise ValueError('任务已被删除，未保存本窗口的修改。')
+                fields = ('task', 'due_date', 'remind_at', 'manual_seconds', 'difficulty', 'note', 'ai_locked')
+                auto_started = self.row['status'] == '未开始' and current['status'] == '进行中' and current['focus_seconds'] > self.row['focus_seconds']
+                if any(current[k] != self.row[k] for k in fields) or (current['status'] != self.row['status'] and not auto_started):
+                    raise ValueError('任务已在其他窗口修改或打卡。请关闭并重新打开本窗口，再保存，避免覆盖新记录。')
+                self.store.update_task(**values, confirm_limits=True)
+                return True
+            try:
+                if not budget_action(self, self.store, save):
+                    return
+            except ValueError as error:
+                self.save_error.setText(str(error))
+                self.save_error.show()
+                return
         super().accept()
 
 

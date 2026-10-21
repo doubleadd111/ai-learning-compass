@@ -5,7 +5,7 @@ from desktop import DISPLAY_VERSION, VERSION
 
 def test_patch_version_and_installer_are_consistent():
     root = Path(__file__).resolve().parents[1]
-    assert VERSION == DISPLAY_VERSION == "2026.10.11"
+    assert VERSION == DISPLAY_VERSION == "2026.10.12"
     assert f'#define AppVersion "{VERSION}"' in (root / "packaging" / "installer.iss").read_text(encoding="utf-8")
     log = (root / "CHANGELOG.md").read_text(encoding="utf-8")
     assert all(version in log for version in ("2026.10.9", "2026.10.8", "2026.10.7", "2026.10.6", "2026.10.5", "2026.10.4", "2026.10.3", "2026.10.2", "2026.10.1", "2026.10.0"))

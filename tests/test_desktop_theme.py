@@ -114,6 +114,9 @@ def test_pages_fit_supported_sizes_and_theme_switch_keeps_navigation(qtbot, tmp_
                         item = table.topLevelItem(row)
                         if any(table.itemWidget(item, col) is control for col in range(table.columnCount())):
                             table.scrollToItem(item)
+                            # Compact task tables keep the task title readable;
+                            # the action column is reachable by horizontal scroll.
+                            table.horizontalScrollBar().setValue(table.horizontalScrollBar().maximum())
                             app.processEvents()
                 corner = control.mapTo(window, control.rect().bottomRight())
                 assert 0 <= corner.x() < window.width(), control.text()

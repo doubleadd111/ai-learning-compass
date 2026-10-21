@@ -4,7 +4,7 @@ The caller owns the transaction, pre-operation backup and app-exit checks.
 Nothing here restores settings, model connections or unrelated plans.
 """
 TABLES = ("plans", "weeks", "tasks", "reviews", "generation_events", "focus_sessions",
-          "notifications", "undo", "plan_briefs", "plan_versions", "plan_schedules", "pause_history")
+          "notifications", "undo", "plan_briefs", "plan_versions", "plan_schedules", "pause_history", "task_details", "task_series", "series_tasks")
 
 
 def missing_plan_rows(source, plan_id):
@@ -12,8 +12,10 @@ def missing_plan_rows(source, plan_id):
     for table in TABLES:
         if table == "plans":
             query = "SELECT * FROM plans WHERE id=?"
-        elif table in {"focus_sessions", "notifications"}:
+        elif table in {"focus_sessions", "notifications", "task_details"}:
             query = f"SELECT * FROM {table} WHERE task_id IN (SELECT id FROM tasks WHERE plan_id=?)"
+        elif table == "series_tasks":
+            query = "SELECT * FROM series_tasks WHERE series_id IN (SELECT id FROM task_series WHERE plan_id=?)"
         else:
             query = f"SELECT * FROM {table} WHERE plan_id=?"
         result[table] = [dict(row) for row in source.execute(query, (plan_id,))]

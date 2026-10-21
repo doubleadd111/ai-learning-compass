@@ -93,10 +93,13 @@ def test_same_names_selection_search_rename_and_refresh_keep_ids(ui, monkeypatch
     ui.refresh()
     assert ui.plan_list.currentItem().data(Qt.ItemDataRole.UserRole) == second
     ui.search.setText("乙")
-    assert ui.plan_list.count() == 1
+    assert ui.plan_list.count() == 2  # Matching plan plus the fixed standalone inbox.
     assert ui.plan_list.currentItem().data(Qt.ItemDataRole.UserRole) == second
-    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **kw: ("我的简短计划", True))
     ui.rename_selected()
+    dialog = ui.tools.windows[('rename', second)]
+    assert not dialog.isModal() and dialog.parentWidget() is None
+    dialog.setTextValue('我的简短计划')
+    dialog.accept()
     ui.search.clear()
     ui.refresh()
     item = next(ui.plan_list.item(i) for i in range(ui.plan_list.count())
