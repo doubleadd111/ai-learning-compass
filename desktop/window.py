@@ -126,7 +126,7 @@ class StatusLabel(QLabel):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, store, *, credentials=None, enable_tray=True):
+    def __init__(self, store, *, credentials=None, enable_tray=True, defer_hidden=False):
         super().__init__()
         self.store = store
         self.store.expire_pauses()
@@ -149,6 +149,10 @@ class MainWindow(QMainWindow):
         self.history_windows = []
         self.exiting = False
         self.enable_tray = enable_tray
+        self.defer_hidden = defer_hidden
+        self._pages_ready = False
+        self._dirty_pages = set(range(5))
+        self._refresh_queued = False
         self.setWindowTitle(f"学习罗盘 {DISPLAY_VERSION}")
         self.setWindowIcon(compass_icon())
         self.resize(1220, 820)
@@ -163,7 +167,16 @@ class MainWindow(QMainWindow):
         self.guide_shortcut = QShortcut(QKeySequence("F1"), self)
         self.guide_shortcut.activated.connect(lambda: open_guide(self))
         self._build_tray()
+        self._pages_ready = True
         self.refresh()
+        from desktop.capture_hotkey import CaptureHotkey
+        self.capture_hotkey = CaptureHotkey(self.quick_capture)
+        try:
+            self.capture_hotkey.configure(self.store.setting('capture_hotkey_enabled',False),self.store.setting('capture_hotkey','Ctrl+Alt+N'))
+        except ValueError as error:
+            self.notice.setText(str(error))
+        self.quick_capture_shortcut = QShortcut(QKeySequence('Ctrl+Shift+N'),self)
+        self.quick_capture_shortcut.activated.connect(self.quick_capture)
         self.clock_timer = QTimer(self)
         self.clock_timer.timeout.connect(self.tick)
         self.clock_timer.start(1000)
@@ -271,12 +284,28 @@ class MainWindow(QMainWindow):
         self.page_subtitle.setText(["让每一小步，都算数。", "收藏目标，也记录走过的路。",
                                    "把时间留给真正重要的事。", "专注当下，慢慢抵达。",
                                    "让工具适合你的习惯。"][index])
+        if self._pages_ready and index in self._dirty_pages:
+            self._refresh_page(index)
+
+    def _refresh_page(self, index):
+        callbacks = {0:self.refresh_today,1:self.refresh_library,2:self.refresh_week,3:self.refresh_focus_tasks}
+        if index in callbacks:
+            with self.store.read_scope():
+                callbacks[index]()
+        self._dirty_pages.discard(index)
 
     def changeEvent(self, event):
         super().changeEvent(event)
         if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow() and hasattr(self, 'week_panel'):
             # A peer tool may have saved while the main workspace was behind it.
-            self.refresh()
+            if not self.defer_hidden:
+                self.refresh()
+            elif not self._refresh_queued:
+                self._refresh_queued = True
+                def updated():
+                    self._refresh_queued = False
+                    if not self.exiting and self.store.path.exists():self.refresh()
+                QTimer.singleShot(0, updated)
 
     def _today_page(self):
         page, layout = page_layout()
@@ -326,16 +355,23 @@ class MainWindow(QMainWindow):
         self.today_completed.setToolTip('同时显示安排在今天的已完成任务；更早或未来的已完成任务请到计划库或独立任务箱查看。')
         self.today_completed.toggled.connect(self.refresh_today_tasks)
         task_filters.addWidget(self.today_completed)
+        self.today_important = QCheckBox('只看今天重点')
+        self.today_important.setToolTip('只筛选原今日/逾期范围内的重点，不改变未来任务的安排日期。')
+        self.today_important.toggled.connect(self.refresh_today_tasks)
         layout.addLayout(task_filters)
         self.today_budget = label("", name="muted", wrap=True)
         layout.addWidget(self.today_budget)
         layout.addWidget(horizontal(menu_button("任务管理", [
             ("添加自己的任务", self.add_manual_task),
+            ('快速记下一件事',self.quick_capture),
+            ('待安排收集箱',self.open_capture_inbox),
+            ('选中任务：优先级与今天重点',lambda:self.open_attention(self.today_tree.currentItem())),
+            ('选中任务：补记实际学习日期',lambda:self.open_study_log(self.today_tree.currentItem())),
             ("安排逾期任务", lambda: self.open_schedule(overdue=True)),
             ("记录／编辑选中任务", lambda: self.edit_tree_task(self.today_tree.currentItem()))]),
-            menu_button("学习工具", [("学习统计", self.open_statistics), ("周期任务与复习", self.open_recurring),
+            menu_button("学习工具", [("学习统计", self.open_statistics), ('实际学习日历',self.open_actual_statistics), ("周期任务与复习", self.open_recurring),
                 ("选中任务的执行步骤", lambda: self.open_steps(self.today_tree.currentItem())),
-                ("使用指南", lambda: open_guide(self, "tools"))])))
+                ("使用指南", lambda: open_guide(self, "tools"))]), self.today_important))
         self.today_task_search = TaskSearch(status=False)
         self.today_task_search.changed.connect(self.refresh_today_tasks)
         layout.addWidget(self.today_task_search)
@@ -380,6 +416,9 @@ class MainWindow(QMainWindow):
         self.plan_more_menu.delete_button = self.plan_more_menu.items[-1][1]
         tasks_menu = menu_button("任务安排", [
             ("添加任务到此计划", lambda: self.add_manual_task(self.selected_plan_id)),
+            ('待安排收集箱',self.open_capture_inbox),
+            ('选中任务：优先级与今天重点',lambda:self.open_attention(self.plan_tree.currentItem())),
+            ('选中任务：补记实际学习日期',lambda:self.open_study_log(self.plan_tree.currentItem())),
             ("记录／编辑选中任务", lambda: self.edit_tree_task(self.plan_tree.currentItem())),
             ("调整排期", lambda: self.open_schedule(plan_id=self.selected_plan_id)),
             ("任务分组与执行步骤", self.open_structure)])
@@ -417,7 +456,7 @@ class MainWindow(QMainWindow):
         button_icon(following, "right")
         self.week_heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(horizontal(previous, self.week_heading,
-                                   button("本周", lambda: self.change_week(0)), following, button("添加任务", self.add_manual_task)))
+                                   button("本周", lambda: self.change_week(0)), following, button('月视图',self.open_month),button("添加任务", self.add_manual_task)))
         self.week_panel = WeekPanel(self.store, self.start_focus_for_task, self.edit_task_id, jump=self.jump_week)
         self.week_tree = self.week_panel.table
         layout.addWidget(self.week_panel, 1)
@@ -496,9 +535,18 @@ class MainWindow(QMainWindow):
         self.reminders_paused.setChecked(self.store.setting("reminders_paused", False))
         self.reminders_paused.toggled.connect(lambda value: self.store.set_setting("reminders_paused", value))
         general_layout.addWidget(self.reminders_paused)
+        self.capture_key_enabled = QCheckBox('启用全局快捷录入（软件在托盘运行时也可用）')
+        self.capture_key_enabled.setChecked(self.store.setting('capture_hotkey_enabled',False))
+        self.capture_key = QLineEdit(self.store.setting('capture_hotkey','Ctrl+Alt+N'))
+        self.capture_key.setAccessibleName('全局快捷录入组合键')
+        general_layout.addWidget(self.capture_key_enabled)
+        general_layout.addWidget(horizontal(self.capture_key,button('应用快捷键',self.configure_capture_hotkey)))
+        general_layout.addWidget(label('窗口内可用Ctrl+Shift+N快速录入；全局快捷键默认关闭，占用冲突会提示，不会抢走其他程序的快捷键。',name='muted',wrap=True))
         general_layout.addStretch()
         general_layout.addWidget(label(f"学习罗盘 {DISPLAY_VERSION} · {build_label()}\n模型请求仅发送到你配置的服务商。离线时仍可管理计划、记录进度和专注。", name="muted", wrap=True))
-        tabs.addTab(general, "外观与提醒")
+        general_scroll=QScrollArea();general_scroll.setWidgetResizable(True);general_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        general_scroll.setWidget(general)
+        tabs.addTab(general_scroll, "外观与提醒")
         self.budget_settings = BudgetSettings(self.store, self.refresh, self)
         budget_scroll = QScrollArea()
         budget_scroll.setWidgetResizable(True)
@@ -560,6 +608,10 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "操作未完成", "无法完成这项操作，请检查文件和数据目录。")
 
     def refresh(self):
+        with self.store.read_scope():
+            self._refresh_now()
+
+    def _refresh_now(self):
         configs = self.store.connections()
         selected = self.store.setting("active_connection")
         self.model_picker.blockSignals(True)
@@ -581,10 +633,15 @@ class MainWindow(QMainWindow):
             self.connection_list.addItem(item)
         if self.connection_list.count():
             self.connection_list.setCurrentRow(0)
-        self.refresh_today()
-        self.refresh_library()
-        self.refresh_week()
-        self.refresh_focus_tasks()
+        if self.defer_hidden:
+            self._dirty_pages.update(range(5))
+            self._refresh_page(self.stack.currentIndex())
+        else:
+            self.refresh_today()
+            self.refresh_library()
+            self.refresh_week()
+            self.refresh_focus_tasks()
+            self._dirty_pages.clear()
 
     def refresh_today(self):
         today = date.today()
@@ -637,6 +694,8 @@ class MainWindow(QMainWindow):
         rows = [r for r in self.store.tasks(self.today_plan_filter.currentData()) if not r['archived'] and not r.get('paused')
                 and r['due_date'] <= today and (r['status'] != '已完成' or self.today_completed.isChecked() and r['due_date'] == today)]
         rows = self.today_task_search.apply(rows, date.today())
+        if self.today_important.isChecked():
+            rows = [r for r in rows if r.get('focus_date') == date.today().isoformat()]
         self.fill_tasks(self.today_tree, rows, self.today_task_search)
         for i in range(self.today_tree.topLevelItemCount()):
             item = self.today_tree.topLevelItem(i)
@@ -653,9 +712,11 @@ class MainWindow(QMainWindow):
             self.today_empty.setText('结束日期不能早于开始日期，请调整日期范围。')
 
     def fill_tasks(self, tree, rows, search=None):
+        from desktop.organizer import ordered, label as attention_label
         tree.clear()
-        for task in rows:
-            item = QTreeWidgetItem([task["task"].title, task["due_date"], f"{task['task'].duration_minutes} 分钟", display_status(task, date.today()), ""])
+        for task in ordered(rows):
+            caption = attention_label(task)
+            item = QTreeWidgetItem([(caption+' ｜ ' if caption else '')+task["task"].title, task["due_date"], f"{task['task'].duration_minutes} 分钟", display_status(task, date.today()), ""])
             item.setData(0, Qt.ItemDataRole.UserRole, task["id"])
             set_task_tip(item, task)
             mark_overdue(item, task, 5, date.today())
@@ -1036,12 +1097,14 @@ class MainWindow(QMainWindow):
                     source.refresh()
             elif operation=='ai_modify':
                 self.modify_plan(plan_id=row['plan_id'],task_ids=[task_id])
-            elif operation=='steps':
+            elif operation in ('steps','attention','study_log'):
+                from desktop.organizer_ui import AttentionDialog, StudyLogDialog
+                dialog_type={'steps':StepsDialog,'attention':AttentionDialog,'study_log':StudyLogDialog}[operation]
                 def changed(_):
                     self.refresh()
                     if source is not None and source is not self and isValid(source) and hasattr(source,'refresh'):
                         source.refresh()
-                self.tools.open(('steps',task_id),lambda: StepsDialog(self.store,task_id,self),changed)
+                self.tools.open((operation,task_id),lambda: dialog_type(self.store,task_id,self),changed)
             else:
                 if operation not in ('edit','due','status','note','reminder','ai_locked'):
                     raise ValueError('无法识别这项任务操作，请重新打开菜单。')
@@ -1096,6 +1159,43 @@ class MainWindow(QMainWindow):
     def open_statistics(self):
         from desktop.learning_ui import StatisticsDialog
         self.tools.open("statistics", lambda: StatisticsDialog(self.store, self))
+
+    def quick_capture(self):
+        from desktop.organizer_ui import QuickAddDialog
+        return self.tools.open('quick_add',lambda:QuickAddDialog(self.store,self),lambda _:self.refresh())
+
+    def open_capture_inbox(self):
+        from desktop.organizer_ui import CaptureInboxDialog
+        return self.tools.open('capture_inbox',lambda:CaptureInboxDialog(self.store,self),lambda _:self.refresh())
+
+    def open_actual_statistics(self):
+        from desktop.organizer_ui import ActualStatisticsDialog
+        return self.tools.open('actual_statistics',lambda:ActualStatisticsDialog(self.store,self))
+
+    def open_month(self):
+        from desktop.month_view import MonthDialog
+        return self.tools.open('month',lambda:MonthDialog(self.store,self.edit_task_id,self),lambda _:self.refresh())
+
+    def open_attention(self,item):
+        from desktop.organizer_ui import AttentionDialog
+        tid=item.data(0,Qt.ItemDataRole.UserRole) if item else None
+        if tid:return self.tools.open(('attention',tid),lambda:AttentionDialog(self.store,tid,self),lambda _:self.refresh())
+        self.notice.setText('请先选择一项任务，再设置优先级或今天重点。')
+
+    def open_study_log(self,item):
+        from desktop.organizer_ui import StudyLogDialog
+        tid=item.data(0,Qt.ItemDataRole.UserRole) if item else None
+        if tid:return self.tools.open(('study_log',tid),lambda:StudyLogDialog(self.store,tid,self),lambda _:self.refresh())
+        self.notice.setText('请先选择一项任务，再补记实际学习日期。')
+
+    def configure_capture_hotkey(self):
+        def run():
+            enabled=self.capture_key_enabled.isChecked();key=self.capture_key.text().strip()
+            self.capture_hotkey.configure(enabled,key)
+            self.store.set_setting('capture_hotkey',key)
+            self.store.set_setting('capture_hotkey_enabled',enabled)
+            self.notice.setText('全局快捷录入已启用。' if enabled else '全局快捷录入已关闭；窗口内仍可用Ctrl+Shift+N。')
+        self.safe(run)
 
     def open_recurring(self):
         from desktop.learning_ui import RecurringDialog
@@ -1465,6 +1565,7 @@ class MainWindow(QMainWindow):
         self.cancel_request()
         close_guide()
         self.exiting = True
+        if hasattr(self,'capture_hotkey'):self.capture_hotkey.close()
         if self.tray:
             self.tray.hide()
         self.close()
@@ -1488,4 +1589,5 @@ class MainWindow(QMainWindow):
             self.focus.pause()
             self.cancel_request()
             close_guide()
+            if hasattr(self,'capture_hotkey'):self.capture_hotkey.close()
             event.accept()

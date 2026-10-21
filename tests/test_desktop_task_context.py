@@ -77,7 +77,7 @@ def test_hit_task_replaces_old_and_multi_selection_readonly(workspace,entry):
         assert [i.data(0,Qt.ItemDataRole.UserRole) for i in tree.selectedItems()]==[b]
         assert tree.currentItem().data(0,Qt.ItemDataRole.UserRole)==b
     assert menu.isVisible() and menu.task_id==b
-    assert set(buttons(menu))=={'edit','due','status','note','focus','reminder','steps','ai_locked','ai_modify','delete'}
+    assert set(buttons(menu))=={'edit','due','status','note','focus','reminder','steps','attention','study_log','ai_locked','ai_modify','delete'}
     assert buttons(menu)['delete'][0].isEnabled()
     assert not buttons(menu)['ai_modify'][0].isEnabled()
     assert w.selected_plan_id==library_plan

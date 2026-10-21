@@ -28,6 +28,13 @@ def check_input_controls(window):
     forms.append(ScheduleDialog(window.store, window, plan_id=saved['id'], kind='暂停'))
     forms.append(ManualTaskDialog(window.store, window))
     forms.append(PlanHistoryWindow(window, saved['id']))
+    from desktop.organizer_ui import QuickAddDialog, AttentionDialog, StudyLogDialog, ActualStatisticsDialog
+    from desktop.month_view import MonthDialog, MovePreviewDialog
+    tid=saved['tasks'][0]['id']
+    forms.extend([QuickAddDialog(window.store,window), AttentionDialog(window.store,tid,window),
+        StudyLogDialog(window.store,tid,window), ActualStatisticsDialog(window.store,window),
+        MonthDialog(window.store,window.edit_task_id,window),
+        MovePreviewDialog(window.store,tid,date.today(),window)])
     from desktop.trash_ui import TrashDialog, PurgeDialog
     forms.extend([TrashDialog(window.store, window), PurgeDialog('离线清除确认检查', window)])
     from desktop.learning_ui import StatisticsDialog, StepsDialog, StructureDialog, RecurringDialog, SeriesListDialog

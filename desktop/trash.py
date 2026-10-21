@@ -17,7 +17,7 @@ from models import DailyTask, validate_plan_for_profile
 from progress_store import TaskProgress
 
 RETENTION_DAYS = 30
-TASK_TABLES = ('tasks', 'focus_sessions', 'notifications', 'task_details', 'series_tasks')
+TASK_TABLES = ('tasks', 'focus_sessions', 'notifications', 'task_details', 'series_tasks', 'task_attention', 'study_events')
 
 
 def clock():
@@ -56,6 +56,11 @@ def validate_entry(c, entry):
             raise ValueError('回收站保留时间无效')
         rows = json.loads(entry['snapshot_json'])
         tables = TABLES if entry['kind'] == 'plan' else TASK_TABLES if entry['kind'] == 'task' else ()
+        tables = tuple(t for t in tables if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (t,)).fetchone())
+        from desktop.organizer import TASK_TABLES as ORGANIZER_TABLES
+        for table in ORGANIZER_TABLES:
+            if table in tables:
+                rows.setdefault(table, [])  # Old schema7 snapshots stay unchanged on disk.
         if not tables or set(rows) != set(tables):
             raise ValueError('回收站资料格式不正确')
         for table in tables:
@@ -71,9 +76,9 @@ def validate_entry(c, entry):
             if len(rows['plans']) != 1 or rows['plans'][0]['id'] != pid:
                 raise ValueError('回收站计划不一致')
             series = {r['id'] for r in rows['task_series']}
-            for table in TABLES:
+            for table in tables:
                 for r in rows[table]:
-                    if table in ('plans', 'focus_sessions', 'notifications', 'task_details'):
+                    if table in ('plans', 'focus_sessions', 'notifications', 'task_details', 'task_attention', 'study_events'):
                         continue
                     if table == 'series_tasks':
                         if r['series_id'] not in series or (r['task_id'] is not None and r['task_id'] not in ids):
@@ -82,8 +87,8 @@ def validate_entry(c, entry):
                         raise ValueError('回收站包含其他计划资料')
         elif len(tasks) != 1 or tasks[0]['id'] != entry['entity_id'] or tasks[0]['manual'] != 1:
             raise ValueError('回收站只支持单个手动任务')
-        for table in ('focus_sessions', 'notifications', 'task_details'):
-            if any(r['task_id'] not in ids for r in rows[table]):
+        for table in ('focus_sessions', 'notifications', 'task_details', 'task_attention', 'study_events'):
+            if any(r['task_id'] not in ids for r in rows.get(table, [])):
                 raise ValueError('回收站包含其他任务记录')
         if not pid and any(r['task_id'] not in ids for r in rows['series_tasks']):
             raise ValueError('回收站周期任务不一致')
@@ -104,13 +109,15 @@ def validate_entry(c, entry):
         for r in rows['focus_sessions']:
             if r['seconds'] < 0:
                 raise ValueError('回收站专注记录无效')
+        from desktop.organizer import validate_rows
+        validate_rows(rows, ids)
         # Validate complete plan aggregates in an empty in-memory database. Never
         # execute SQL supplied by the snapshot or copy unrelated live rows.
         if pid:
             with closing(sqlite3.connect(':memory:')) as scratch:
                 scratch.row_factory = sqlite3.Row
                 scratch.execute('PRAGMA foreign_keys=ON')
-                for table in TABLES:
+                for table in tables:
                     scratch.execute(c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()[0])
                 _insert(scratch, rows)
                 from desktop.store import Store

@@ -12,7 +12,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from desktop.store import Store
-from desktop import VERSION
+from desktop import VERSION, guide_matches_version
 from desktop.guide import CHAPTERS
 
 
@@ -25,7 +25,7 @@ def main():
     args = parser.parse_args()
     executable = args.directory.resolve() / "LearningCompass.exe"
     bundled_guide = (executable.parent / "_internal" / "docs" / "desktop-guide.md").read_text(encoding="utf-8")
-    assert f"`{VERSION}`" in bundled_guide
+    assert guide_matches_version(bundled_guide, VERSION)
     assert all(f"## {chapter}" in bundled_guide for chapter in CHAPTERS.values())
     environment = dict(os.environ)
     environment["PATH"] = str(Path(os.environ.get("WINDIR", "C:/Windows")) / "System32")
@@ -50,6 +50,8 @@ def main():
         assert first['search_scope']['success']
         assert first['task_context']['success']
         assert first['trash']['success']
+        assert first['organizer']['success']
+        assert first['organizer']['readable_task_form'] and first['organizer']['calendar_disjoint']
         store = Store(data)
         row = store.tasks()[0]
         store.update_task(row["id"], row["task"], row["due_date"], row["remind_at"], "已完成", 12, 2, "冻结程序重启验证")
@@ -86,6 +88,7 @@ def main():
         report['search_scope'] = first['search_scope']
         report['task_context'] = first['task_context']
         report['trash'] = first['trash']
+        report['organizer'] = first['organizer']
         report['fresh_restart_report'] = True
         if args.input_scope:
             assert first['input_scope']['success']
@@ -103,8 +106,8 @@ def main():
             report["modal_guide"] = native_report["modal_guide"]
             report["guide_lifecycle"] = native_report["guide_lifecycle"]
             peers = native_report['workspace_windows']
-            assert peers['success'] and peers['relative_z_order_switches'] == 52
-            assert peers['foreground_switches'] + peers['background_activation_denied'] == 52
+            assert peers['success'] and peers['relative_z_order_switches'] == 4 * peers['ownerless_tools']
+            assert peers['foreground_switches'] + peers['background_activation_denied'] == 4 * peers['ownerless_tools']
             report['native_workspace_windows'] = native_report['workspace_windows']
             assert native_report['task_discovery']['success']
             report['native_task_discovery'] = native_report['task_discovery']
@@ -116,6 +119,8 @@ def main():
             report['native_task_context'] = native_report['task_context']
             assert native_report['trash']['success']
             report['native_trash'] = native_report['trash']
+            assert native_report['organizer']['success']
+            report['native_organizer'] = native_report['organizer']
             assert native_report["plan_deletion"]["success"]
             report["native_plan_deletion"] = native_report["plan_deletion"]
             assert native_report["plan_history"]["success"]

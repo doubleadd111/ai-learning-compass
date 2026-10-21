@@ -150,6 +150,8 @@ def recurrence_dates(rule):
 
 def validate_snapshot_extras(snapshot):
     tids = {r['id'] for r in snapshot['tasks']}
+    from desktop.organizer import validate_rows
+    validate_rows(snapshot, tids)
     tasks = {r['id']: r for r in snapshot['tasks']}
     pid = snapshot['plans'][0]['id']
     seen = set()

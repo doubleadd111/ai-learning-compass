@@ -14,7 +14,7 @@ from datetime import datetime
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from desktop import VERSION
+from desktop import VERSION, guide_matches_version, validate_build_version, windows_version
 
 
 def source_digest():
@@ -34,7 +34,7 @@ def prepare():
     build.mkdir(exist_ok=True)
     if not compass_icon(256).pixmap(256, 256).save(str(build / "compass.ico"), "ICO"):
         raise RuntimeError("无法生成软件图标")
-    version_tuple = tuple(int(part) for part in VERSION.split(".")) + (0,)
+    version_tuple = windows_version(VERSION)
     (build / "version-info.txt").write_text(f"""VSVersionInfo(
       ffi=FixedFileInfo(filevers={version_tuple}, prodvers={version_tuple}, mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0,0)),
       kids=[StringFileInfo([StringTable('080404b0', [StringStruct('CompanyName','doubleadd111'),
@@ -65,12 +65,34 @@ def main():
     parser.add_argument("--iscc", type=Path, default=ROOT / ".tools" / "InnoSetup" / "ISCC.exe")
     parser.add_argument("--local-test", action="store_true", help="只构建本机测试程序，不生成正式安装包或便携 ZIP")
     args = parser.parse_args()
+    validate_build_version(VERSION, local_test=args.local_test)
+    guide = (ROOT / 'docs/desktop-guide.md').read_text(encoding='utf-8')
+    if not guide_matches_version(guide, VERSION):
+        raise RuntimeError("使用指南版本与程序不一致，请先同步指南")
+    if not args.local_test:
+        installer = (ROOT / "packaging/installer.iss").read_text(encoding="utf-8")
+        numeric = '.'.join(str(part) for part in windows_version(VERSION))
+        if f'#define AppVersion "{VERSION}"' not in installer or f'#define AppNumericVersion "{numeric}"' not in installer:
+            raise RuntimeError("安装器版本与程序不一致，请先同步AppVersion和AppNumericVersion")
     source_hash = source_digest()
     installed = prepare()
     subprocess.run([sys.executable, "-m", "PyInstaller", "--noconfirm", str(ROOT / "packaging" / "desktop.spec")], cwd=ROOT, check=True)
     shutil.copy2(ROOT / "docs" / "desktop-guide.md", ROOT / "dist" / "LearningCompass" / "使用说明.md")
     shutil.copy2(ROOT / "THIRD_PARTY_NOTICES.md", ROOT / "dist" / "LearningCompass" / "THIRD_PARTY_NOTICES.md")
     shutil.copy2(ROOT / "CHANGELOG.md", ROOT / "dist" / "LearningCompass" / "更新日志.md")
+    # Keep the new changelog's archive/rules links usable in portable packages.
+    for relative in ('CHANGELOG.md', 'CHANGELOG-legacy.md', 'docs/versioning.md'):
+        target = ROOT / 'dist/LearningCompass' / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / relative, target)
+    for source in (ROOT / 'docs/releases').glob('*.md'):
+        target = ROOT / 'dist/LearningCompass/docs/releases' / source.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+    for relative in ('docs/desktop-guide.md', 'docs/desktop-verification.md'):
+        target = ROOT / 'dist/LearningCompass' / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / relative, target)
     built_at = datetime.now().astimezone().isoformat(timespec="minutes")
     (ROOT / "dist" / "LearningCompass" / "build-info.json").write_text(json.dumps(
         dict(version=VERSION, kind="local-test" if args.local_test else "release", built_at=built_at),

@@ -34,6 +34,7 @@ def arrangement(snapshot):
         tasks=sorted([{k: row[k] for k in ("id", "week", "day", "manual", *TASK_FIELDS)} for row in snapshot["tasks"]], key=lambda r: r["id"]),
         weeks=sorted(snapshot["weeks"], key=lambda r: r["number"]),
         schedule=snapshot["plan_schedules"], briefs=snapshot["plan_briefs"],
+        attention=sorted(snapshot.get('task_attention',[]),key=lambda r:r['task_id']),
         details=sorted([(r['task_id'], r['stage'], [(s['id'], s['title']) for s in json.loads(r['steps_json'])])
                         for r in snapshot.get('task_details', []) if r['stage'] or json.loads(r['steps_json'])]))
 
@@ -113,6 +114,15 @@ def _replay(store, c, plan_id, target):
             c.execute('DELETE FROM task_details WHERE task_id=?', (tid,))
     if target.get('task_series') != current.get('task_series'):
         notices.append('周期规则保持当前状态；本次仅回溯已生成任务的安排，不重新启动或扩增周期')
+    from desktop.organizer import attention_in
+    target_attention={r['task_id']:r for r in target.get('task_attention',[])}
+    for tid in target_tasks:
+        if c.execute('SELECT 1 FROM tasks WHERE id=?',(tid,)).fetchone():
+            r=target_attention.get(tid)
+            if r is None:
+                c.execute('DELETE FROM task_attention WHERE task_id=?',(tid,))
+            else:
+                attention_in(c,tid,priority=r['priority'],pinned=r['pinned'],focus_date=r['focus_date'])
     plan = target["plans"][0]
     c.execute("UPDATE plans SET " + ",".join(f"{k}=?" for k in PLAN_FIELDS) + " WHERE id=?",
               (*[plan[k] for k in PLAN_FIELDS], plan_id))
@@ -147,6 +157,12 @@ def _replay(store, c, plan_id, target):
 
 def differences(before, after):
     result = []
+    if before.get('task_attention',[]) != after.get('task_attention',[]):
+        titles={r['id']:json.loads(r['payload_json'])['title'] for r in after['tasks']+before['tasks']}
+        def describe_attention(snapshot):
+            from desktop.organizer import PRIORITIES
+            return '\n'.join(f"{titles.get(r['task_id'],'任务')}：{PRIORITIES[r['priority']]}优先级，{'置顶' if r['pinned'] else '不置顶'}，重点日期{r['focus_date'] or '无'}" for r in snapshot.get('task_attention',[])) or '默认展示顺序'
+        result.append(dict(name='优先级、置顶与重点',before=describe_attention(before),after=describe_attention(after)))
     labels = dict(title="计划名称", overview="计划概述", profile_json="目标与时间设置", tips_json="学习建议",
                   start_date="开始日期", weekdays_json="每周学习日", archived="归档状态")
     for field in PLAN_FIELDS:

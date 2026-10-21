@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox,
     QTextBrowser, QVBoxLayout, QWidget)
 
 from desktop.models import DesktopProfile, ModelConnection, PROVIDER_PRESETS
+from desktop.readable_text import ReadableTextEdit, form_scroll
 from models import DailyTask
 
 
@@ -67,9 +68,8 @@ class PlanDialog(QDialog):
         self.subject = QComboBox()
         self.subject.addItems(["Python", "英语", "考试复习", "其他学习目标"])
         self.subject.setEditable(True)
-        self.goal = QPlainTextEdit()
+        self.goal = ReadableTextEdit(min_lines=3,max_lines=6)
         self.goal.setPlaceholderText("例如：准备英语口语面试，能独立完成三分钟自我介绍")
-        self.goal.setMaximumHeight(90)
         self.level = QComboBox()
         self.level.addItems(["零基础", "入门", "已有基础"])
         self.outcome = QLineEdit()
@@ -88,9 +88,8 @@ class PlanDialog(QDialog):
             self.weekdays.append(checkbox)
             day_layout.addWidget(checkbox)
         self.minutes = spin(15, 240, 45)
-        self.preferences = QPlainTextEdit()
+        self.preferences = ReadableTextEdit(min_lines=3,max_lines=7)
         self.preferences.setPlaceholderText("可用设备、偏好、已掌握的内容、需要避开的安排……")
-        self.preferences.setMaximumHeight(90)
         self.connection = QComboBox()
         self.connection.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.connection.setMinimumContentsLength(12)
@@ -103,7 +102,10 @@ class PlanDialog(QDialog):
                              ("计划周数", self.weeks), ("开始日期", self.start), ("每周学习日", day_box),
                              ("每日上限（分钟）", self.minutes), ("偏好和限制", self.preferences), ("使用模型", self.connection)):
             form.addRow(name, widget)
-        layout.addLayout(form)
+        if embedded:
+            layout.addLayout(form)
+        else:
+            layout.addWidget(form_scroll(form),1)
         tip = QLabel("生成会使用你选择的模型服务并消耗其 API 额度。计划保存后可离线查看。")
         tip.setWordWrap(True)
         tip.setObjectName("muted")
@@ -235,13 +237,15 @@ class TaskDialog(QDialog):
         self.store = store
         task = row["task"]
         self.setWindowTitle("学习任务与记录")
-        self.resize(650, 700)
+        self.resize(760, 800)
+        self.setMinimumSize(600,480)
         layout = QVBoxLayout(self)
         form = QFormLayout()
         self.title = QLineEdit(task.title)
-        self.description = QPlainTextEdit(task.description)
-        self.description.setMaximumHeight(100)
-        self.deliverable = QLineEdit(task.deliverable)
+        self.description = ReadableTextEdit(task.description)
+        self.description.setAccessibleName('任务说明')
+        self.deliverable = ReadableTextEdit(task.deliverable,min_lines=2,max_lines=5)
+        self.deliverable.setAccessibleName('完成产出')
         self.duration = spin(5, 240, task.duration_minutes)
         self.due = date_edit(QDate.fromString(row["due_date"], "yyyy-MM-dd"))
         self.reminder = QCheckBox("提醒我")
@@ -266,18 +270,19 @@ class TaskDialog(QDialog):
         for value in range(1, 6):
             self.difficulty.addItem(str(value), value)
         self.difficulty.setCurrentIndex(self.difficulty.findData(row["difficulty"]))
-        self.note = QPlainTextEdit(row["note"])
-        self.note.setMaximumHeight(100)
+        self.note = ReadableTextEdit(row['note'],min_lines=3,max_lines=8)
+        self.note.setAccessibleName('收获与问题')
         for label, widget in (("任务名称", self.title), ("任务说明", self.description), ("完成产出", self.deliverable),
                               ("预计分钟", self.duration), ("安排日期", self.due), ("提醒", reminder_box),
                               ("完成情况", self.status), ("人工补记分钟", self.manual), ("难度 1–5", self.difficulty), ("收获与问题", self.note)):
             form.addRow(label, widget)
         form.addRow("AI 保护", self.ai_locked)
-        layout.addLayout(form)
+        self.fields=form_scroll(form)
+        layout.addWidget(self.fields,1)
         tip = QLabel(f"已自动记录专注时间：{row['focus_seconds'] // 60} 分钟。实际用时 = 专注时间 + 人工补记。" + ("\n本周已复盘，可补记用时与笔记。" if locked else ""))
         tip.setObjectName("muted")
         tip.setWordWrap(True)
-        layout.addWidget(tip)
+        form.addRow(tip)
         if store is not None:
             from PySide6.QtWidgets import QPushButton
             steps_button = QPushButton("任务分组与执行步骤…")
@@ -300,14 +305,16 @@ class TaskDialog(QDialog):
                         self.ai_locked.setChecked(bool(updated['ai_locked']))
                 open_tool(self, StepsDialog(store, self.row['id'], self), ('steps', self.row['id']), finished)
             steps_button.clicked.connect(show_steps)
-            layout.addWidget(steps_button)
+            form.addRow(steps_button)
         if row.get("manual"):
             from PySide6.QtWidgets import QPushButton
             remove = QPushButton("删除这项手动任务…")
             remove.clicked.connect(lambda: self.done(2))
-            layout.addWidget(remove)
+            form.addRow(remove)
         if locked:
-            for widget in (self.title, self.description, self.deliverable, self.duration, self.due, self.status):
+            self.description.setReadOnly(True)
+            self.deliverable.setReadOnly(True)
+            for widget in (self.title, self.duration, self.due, self.status):
                 widget.setEnabled(False)
         self.save_error = QLabel('')
         self.save_error.setWordWrap(True)

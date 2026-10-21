@@ -122,7 +122,7 @@ class ActionMenu(QFrame):
 def menu_button(title, entries, parent=None):
     button = QPushButton(title + '  ▾', parent)
     button.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
-    menu = ActionMenu(button)
+    menu = ActionMenu(button,scrollable=True)
     button.action_menu = menu
     for label, callback in entries:
         menu.add_action(label, lambda _=False, cb=callback: cb())

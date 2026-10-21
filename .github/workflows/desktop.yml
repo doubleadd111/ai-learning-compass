@@ -31,5 +31,5 @@ jobs:
       - run: python scripts/verify_installer.py --iscc 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
       - uses: actions/upload-artifact@v4
         with:
-          name: LearningCompass-2026.10.12-windows-x64
+          name: LearningCompass-2026.10.13-windows-x64
           path: release/*

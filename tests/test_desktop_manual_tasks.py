@@ -280,12 +280,12 @@ def test_real_schema_four_migration_preserves_children_and_backfills_status(tmp_
     assert row(reopened, task["id"])["focus_seconds"] == 60
     assert reopened.read("SELECT * FROM focus_sessions")[0]["task_id"] == task["id"]
     assert reopened.read("SELECT * FROM notifications")[0]["task_id"] == task["id"]
-    backup = list(reopened.backups.glob("before-schema-7-*.sqlite3"))[0]
+    backup = list(reopened.backups.glob("before-schema-8-*.sqlite3"))[0]
     with closing(sqlite3.connect(backup)) as c:
         assert c.execute("PRAGMA user_version").fetchone()[0] == 4
         assert c.execute("SELECT status,focus_seconds FROM tasks WHERE id=?", (task["id"],)).fetchone() == ("未开始", 60)
     assert reopened.read("PRAGMA foreign_key_check") == []
-    assert reopened.read("PRAGMA user_version")[0]["user_version"] == 7
+    assert reopened.read("PRAGMA user_version")[0]["user_version"] == 8
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])

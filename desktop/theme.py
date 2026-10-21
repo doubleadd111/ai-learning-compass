@@ -93,6 +93,8 @@ def apply_theme(app, choice="system"):
         QFrame#card[currentDay="true"] {{ border:1px solid {accent}; background:{hover}; }}
         QPushButton {{ background:{card}; border:1px solid {line}; padding:9px 16px; border-radius:9px; min-height:20px; }}
         QPushButton#taskFocus {{ padding:5px 10px; min-height:20px; border-radius:7px; }}
+        QPushButton#monthTask {{ padding:4px 6px; min-height:18px; border-radius:6px; text-align:left; }}
+        QPushButton#monthDate {{ padding:3px 6px; min-height:18px; border-radius:6px; }}
         QPushButton:hover, QPushButton[hovered="true"] {{ background:{hover}; border-color:{accent}; color:{accent}; }}
         QPushButton:pressed {{ background:{pressed}; border-color:{accent}; color:{accent}; }}
         QPushButton:focus {{ border:1px solid {accent}; }}

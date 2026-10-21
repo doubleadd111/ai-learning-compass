@@ -7,7 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QEvent
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QTextBrowser, QVBoxLayout, QWidget
 
-from desktop import VERSION
+from desktop import VERSION, guide_matches_version
 from desktop.ui import readable_document, format_reading_blocks
 
 CHAPTERS = {
@@ -20,7 +20,7 @@ CHAPTERS = {
 def guide_sections():
     source = Path(__file__).resolve().parents[1] / "docs" / "desktop-guide.md"
     markdown = source.read_text(encoding="utf-8")
-    if f"`{VERSION}`" not in markdown:
+    if not guide_matches_version(markdown, VERSION):
         raise ValueError("使用指南与程序版本不一致")
     parts = re.split(r"^## (.+)$", markdown, flags=re.MULTILINE)
     sections = dict(zip(parts[1::2], parts[2::2]))

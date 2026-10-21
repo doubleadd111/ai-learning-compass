@@ -46,7 +46,10 @@ def check_workspace_windows(window):
                           window.show_history, window.undo_selected, window.add_manual_task,
                           window.open_schedule, window.resume_draft, window.rename_selected,
                           window.modify_plan, window.create_plan, lambda: window.edit_connection(new=True),
-                          lambda: window.edit_task_id(window.store.tasks()[0]['id'])):
+                          lambda: window.edit_task_id(window.store.tasks()[0]['id']),
+                          window.quick_capture, window.open_capture_inbox, window.open_actual_statistics, window.open_month,
+                          lambda:window.run_task_action(window.store.tasks()[0]['id'],'attention'),
+                          lambda:window.run_task_action(window.store.tasks()[0]['id'],'study_log')):
             before = set(window.tools.windows)
             operation()
             key = (set(window.tools.windows) - before).pop()

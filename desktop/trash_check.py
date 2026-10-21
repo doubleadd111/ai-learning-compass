@@ -77,6 +77,7 @@ def check_trash(window):
     store.delete_plan(pid)
     assert {r['id'] for r in store.tasks()}==original_ids
     window.refresh()
-    return dict(success=True, schema=7, plan_stable_ids=True, task_focus_preserved=True,
+    from desktop.store import SCHEMA_VERSION
+    return dict(success=True, schema=SCHEMA_VERSION, plan_stable_ids=True, task_focus_preserved=True,
         preview_readonly=True, cancel_preserves=True, real_confirmation=True, ownerless=True, search=True,
         explicit_task_date=True, readonly_detail=True)

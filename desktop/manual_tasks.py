@@ -7,6 +7,7 @@ from desktop.controls import SoftComboBox, ArrowWheelTimeEdit
 from desktop.dialogs import buttons, date_edit, spin
 from desktop.schedule_ui import budget_action
 from models import DailyTask
+from desktop.readable_text import ReadableTextEdit
 
 
 class ManualTaskDialog(QDialog):
@@ -37,12 +38,9 @@ class ManualTaskDialog(QDialog):
         self.title = QLineEdit()
         self.title.setMaxLength(80)
         self.title.setPlaceholderText("例如：复习今天的英语生词")
-        self.description = QPlainTextEdit()
-        self.description.setMinimumHeight(80)
-        self.description.setMaximumHeight(110)
+        self.description = ReadableTextEdit()
         self.description.setPlaceholderText("可选：写下具体步骤")
-        self.deliverable = QLineEdit()
-        self.deliverable.setMaxLength(160)
+        self.deliverable = ReadableTextEdit(min_lines=2,max_lines=5)
         self.deliverable.setPlaceholderText("可选：怎样算完成？")
         self.due = date_edit()
         self.duration = spin(5, 240, 25)

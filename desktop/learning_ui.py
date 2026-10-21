@@ -22,6 +22,7 @@ from desktop.tool_windows import open_tool
 from desktop.task_search import search_tasks, TaskQuery, annotate_match
 from desktop.task_style import TaskItemDelegate
 from models import DailyTask
+from desktop.readable_text import ReadableTextEdit
 
 
 def text(value, name='muted'):
@@ -446,11 +447,9 @@ class RecurringDialog(ToolDialog):
         self.title = QLineEdit()
         self.title.setMaxLength(80)
         self.title.setPlaceholderText('例如：复习本周英语生词')
-        self.description = QLineEdit()
-        self.description.setMaxLength(300)
+        self.description = ReadableTextEdit()
         self.description.setPlaceholderText('可选：每次要做哪些步骤？')
-        self.deliverable = QLineEdit()
-        self.deliverable.setMaxLength(160)
+        self.deliverable = ReadableTextEdit(min_lines=2,max_lines=5)
         self.deliverable.setPlaceholderText('可选：怎样算完成？')
         self.duration = spin(5, 240, 20)
         self.duration.setSuffix(' 分钟')

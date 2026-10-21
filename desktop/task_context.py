@@ -79,7 +79,8 @@ class TaskContext(QObject):
                           ('note','填写笔记／补记用时…'),('focus','开始专注')):
             self.add(menu,host,row,key,title)
         menu.section('提醒和整理')
-        for key,title in (('reminder','设置任务提醒…'),('steps','任务分组与执行步骤…'),('ai_locked','设置 AI 修改保护…')):
+        for key,title in (('reminder','设置任务提醒…'),('steps','任务分组与执行步骤…'),
+                          ('attention','优先级与今天重点…'),('study_log','补记实际学习日期…'),('ai_locked','设置 AI 修改保护…')):
             self.add(menu,host,row,key,title)
         self.add(menu,host,row,'ai_modify','让 AI 调整这项任务…')
         menu.section('删除 · 仍需确认')

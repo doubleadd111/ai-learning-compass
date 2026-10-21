@@ -72,7 +72,7 @@ def main():
     QLocalServer.removeServer(server_name)
     server.listen(server_name)
     apply_theme(app, store.setting("theme", "system"))
-    window = MainWindow(store, enable_tray=not args.smoke_test)
+    window = MainWindow(store, enable_tray=not args.smoke_test, defer_hidden=True)
     def reveal():
         socket = server.nextPendingConnection()
         if socket:
@@ -117,6 +117,8 @@ def main():
                 report['task_context'] = check_task_context(window)
                 from desktop.trash_check import check_trash
                 report['trash'] = check_trash(window)
+                from desktop.organizer_check import check_organizer
+                report['organizer'] = check_organizer()
                 if args.guide_window_check:
                     from desktop.guide import open_guide
                     guide = open_guide(window, "modify")

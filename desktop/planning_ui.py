@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QFormLayout, QHBoxLayout,
 from shiboken6 import isValid
 
 from desktop.dialogs import PlanDialog, spin
+from desktop.readable_text import ReadableTextEdit
 from desktop.gateway import GatewayError, ModelGateway
 from desktop.guide import open_guide
 from desktop.models import DesktopProfile, schedule_dates
@@ -122,9 +123,8 @@ class PlanningWindow(QDialog):
         self.quick = QCheckBox("快速生成：跳过追问，仍先确认概略")
         self.quick.setChecked(self.draft.quick)
         box.addWidget(self.quick)
-        self.request = QPlainTextEdit(self.draft.request, page)
+        self.request = ReadableTextEdit(self.draft.request, page,min_lines=3,max_lines=7)
         self.request.setPlaceholderText("例如：只把第二周的练习变简单，日期和其他任务不变")
-        self.request.setMaximumHeight(100)
         self.request.setVisible(self.draft.kind == "modify")
         if self.draft.kind == "modify":
             box.addWidget(note(f"已选 {len(self.draft.target_ids)} 项可编辑任务；受保护任务不会交给模型改写。"))
@@ -400,8 +400,7 @@ class PlanningWindow(QDialog):
             combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
             combo.setMinimumContentsLength(14)
             combo.addItems(["请选择，也可直接在下面填写", *question.options, "不确定", "跳过"])
-            edit = QPlainTextEdit()
-            edit.setMaximumHeight(80)
+            edit = ReadableTextEdit(min_lines=3,max_lines=7)
             edit.setPlaceholderText("选项都不合适？在这里写你的想法；自填内容优先。")
             edit.setPlainText(self.draft.pending_answers.get(question.id, ""))
             self.answer_widgets[question.id] = (combo, edit)

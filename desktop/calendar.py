@@ -155,12 +155,41 @@ class StudyCalendar(QCalendarWidget):
         font = self.font()
         font.setWeight(QFont.Weight.DemiBold if selected else QFont.Weight.Normal)
         painter.setFont(font)
-        painter.drawText(cell, Qt.AlignmentFlag.AlignCenter, str(date.day()))
+        number, marker, annotation = self.cell_geometry(rect,date)
+        painter.drawText(number, Qt.AlignmentFlag.AlignCenter, str(date.day()))
+        if caption := self.cell_annotation(date):
+            painter.setFont(self.annotation_font())
+            painter.setPen(QColor('#FFFFFF' if selected and enabled else colors['accent'] if enabled and in_month else colors['muted']))
+            painter.drawText(annotation, Qt.AlignmentFlag.AlignCenter, caption)
         if date == QDate.currentDate():
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor("#FFFFFF" if selected else colors["accent"]))
-            painter.drawEllipse(QRectF(cell.center().x() - 1.5, cell.bottom() - 5, 3, 3))
+            painter.drawEllipse(marker)
         painter.restore()
+
+    def cell_annotation(self, day):
+        return ''
+
+    def has_annotation_row(self):
+        return False
+
+    def annotation_font(self):
+        font=QFont(self.font());font.setPixelSize(10)
+        return font
+
+    def cell_geometry(self, rect, day):
+        """Date, today marker and optional study duration have separate bounds."""
+        cell=QRectF(rect).adjusted(3,2,-3,-2)
+        if self.has_annotation_row():
+            from PySide6.QtGui import QFontMetricsF
+            caption_height=QFontMetricsF(self.annotation_font()).height()
+            caption=QRectF(cell.left(),cell.bottom()-caption_height,cell.width(),caption_height)
+            number=QRectF(cell).adjusted(0,0,0,-caption_height-3)
+            font=QFont(self.font());font.setWeight(QFont.Weight.DemiBold if day==self.selectedDate() else QFont.Weight.Normal)
+            left=number.center().x()-QFontMetricsF(font).horizontalAdvance(str(day.day()))/2
+            marker=QRectF(left-7,number.center().y()-1.5,3,3)
+            return number,marker,caption
+        return cell,QRectF(cell.center().x()-1.5,cell.bottom()-5,3,3),QRectF()
 
     def showEvent(self, event):
         self._opening_date = self.selectedDate()

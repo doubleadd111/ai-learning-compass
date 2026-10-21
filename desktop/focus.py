@@ -7,9 +7,11 @@ from desktop.models import new_id
 
 
 class FocusTimer:
-    def __init__(self, store, clock=monotonic):
+    def __init__(self, store, clock=monotonic, wall_clock=None):
         self.store = store
         self.clock = clock
+        self.wall_clock = wall_clock or (lambda: datetime.now().astimezone())
+        self.pending_dates = {}
         self.focus_minutes = int(store.setting("focus_minutes", 25))
         self.break_minutes = int(store.setting("break_minutes", 5))
         state = store.setting("focus_state", {})
@@ -29,7 +31,9 @@ class FocusTimer:
 
     def _commit(self):
         if self.phase == "focus" and self.session_id and int(self.elapsed) > 0:
-            self.store.record_focus(self.session_id, self.task_id, int(self.elapsed), self.started_at)
+            self.store.record_focus(self.session_id, self.task_id, int(self.elapsed), self.started_at,
+                                    day_seconds=self.pending_dates if self.pending_dates else None)
+            self.pending_dates.clear()
         self.store.set_setting("focus_state", self.state())
         self.last_commit = int(self.elapsed)
 
@@ -51,7 +55,7 @@ class FocusTimer:
         if self.phase == "focus" and not self.session_id:
             self.task_id = task_id
             self.session_id = new_id()
-            self.started_at = datetime.now().astimezone().isoformat()
+            self.started_at = self.wall_clock().isoformat()
             self.elapsed = 0
         self.running = True
         self.last = self.clock()
@@ -69,7 +73,17 @@ class FocusTimer:
             self._commit()
             return "sleep"
         used = min(delta, self.remaining)
+        previous_whole = int(self.elapsed)
         self.elapsed += used
+        if self.phase == 'focus' and int(self.elapsed) > previous_whole:
+            # Split observed whole-second intervals at local midnight. Never
+            # infer paused/offline time from the session's original start.
+            from datetime import timedelta
+            end = self.wall_clock()-timedelta(seconds=max(0,delta-used))
+            amount = int(self.elapsed)-previous_whole
+            for offset in range(amount):
+                day = (end-timedelta(seconds=amount-offset)).date().isoformat()
+                self.pending_dates[day] = self.pending_dates.get(day,0)+1
         self.remaining -= used
         if self.remaining <= 0:
             self._commit()

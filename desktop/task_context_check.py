@@ -15,8 +15,6 @@ def check_task_context(window):
                 deliverable='菜单不直接保存内容',duration_minutes=15),date.today().isoformat()))
         window.refresh()
         before=store.read('SELECT * FROM tasks ORDER BY id')
-        window.today_plan_filter.setCurrentIndex(window.today_plan_filter.findData('__standalone__'))
-        window.plan_list.setCurrentRow(0)
         def find(tree,tid):
             for i in range(tree.topLevelItemCount()):
                 root=tree.topLevelItem(i)
@@ -24,14 +22,21 @@ def check_task_context(window):
                     if item.data(0,Qt.ItemDataRole.UserRole)==tid:
                         return item
             raise AssertionError('隔离任务未显示')
-        for tree in (window.today_tree,window.plan_tree,window.week_tree):
+        for page,tree in ((0,window.today_tree),(1,window.plan_tree),(2,window.week_tree)):
+            # Follow real navigation: hidden pages intentionally stay dirty.
+            window.navigate(page)
+            window.refresh()
+            if page==0:
+                window.today_plan_filter.setCurrentIndex(window.today_plan_filter.findData('__standalone__'))
+            elif page==1:
+                window.plan_list.setCurrentRow(0)
             tree.setCurrentItem(find(tree,created[0]))
             target=find(tree,created[1])
             point=tree.viewport().mapToGlobal(tree.visualItemRect(target).center())
             tree.setCurrentItem(target)
             assert tree.task_context.open(point,keyboard=True)
             menu=tree.task_context.menu
-            assert menu.task_id==created[1] and len(menu.items)==10
+            assert menu.task_id==created[1] and len(menu.items)==12
             entry={a.data():(a,b) for a,b in menu.items}
             assert entry['edit'][0].isEnabled() and not entry['ai_modify'][0].isEnabled()
             entry['note'][1].click()
@@ -48,7 +53,7 @@ def check_task_context(window):
         assert card.task_context.open(card.mapToGlobal(card.rect().center()),keyboard=True)
         card.task_context.menu.hide()
         assert store.read('SELECT * FROM tasks ORDER BY id')==before
-        return dict(five_entry_points=True,ten_actions=True,stable_target=True,guarded_original_editor=True,
+        return dict(five_entry_points=True,actions=12,stable_target=True,guarded_original_editor=True,
                     manual_ai_disabled=True,open_cancel_readonly=True,success=True)
     finally:
         window.tools.close_all()

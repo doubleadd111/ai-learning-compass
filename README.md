@@ -1,10 +1,12 @@
 # 学习罗盘 2026.10
 
-当前公开试用版本为 **2026.10.12**。新增30天误删回收站、恢复日期选择与只读详情、离线学习统计、任务分组及执行步骤、有限周期任务与复习；改进任务搜索、独立任务查找、任务右键操作、专注时长和窗口交互。[详细发布说明](docs/releases/2026.10.12.md) · [完整更新日志](CHANGELOG.md)。
+当前版本为 **2026.10.13 公开试用版**。合并两次本机测试：新增月视图拖动改期预览、按实际日期的学习日历、快捷录入与待安排收集箱、优先级与今天重点；减少重复刷新，修复长说明阅读和日历时长重叠。[详细发布说明](docs/releases/2026.10.13.md) · [完整更新日志](CHANGELOG.md)。数据库为schema8，旧程序回退必须使用升级前备份。
+
+版本采用完整年份：`2026.10.12`是当月第12次可用更新，`2026.10.12.2`是基于它的第2次测试；换月从 `.1` 开始。主日志汇总最终变化，旧过程完整归档；已有发布不重新编号。[版本与日志规范](docs/versioning.md)。
 
 中文 Windows 桌面学习计划软件：使用自己的 DeepSeek／OpenAI 兼容模型生成通用学习计划，记录进度、每周复盘，提供本机长期保存、备份、托盘提醒与专注计时。
 
-**桌面版下载：**[2026.10.12 公开试用版](https://github.com/doubleadd111/ai-learning-compass/releases/tag/2026.10.12) · [桌面版使用指南](docs/desktop-guide.md) · [验收记录](docs/desktop-verification.md)。安装后无需 Python 或 PowerShell。源码入口为 `run_desktop.py`，依赖使用 `requirements-desktop.txt`。
+**桌面版下载：**[2026.10.13 公开试用版](https://github.com/doubleadd111/ai-learning-compass/releases/tag/2026.10.13) · [桌面版使用指南](docs/desktop-guide.md) · [验收记录](docs/desktop-verification.md)。安装后无需 Python 或 PowerShell。源码入口为 `run_desktop.py`，依赖使用 `requirements-desktop.txt`。
 
 桌面版数据固定保存到 `%LOCALAPPDATA%\LearningCompass`，密钥交给 Windows 凭据管理器。软件卸载或升级会保留数据；备份不包含 API Key。
 

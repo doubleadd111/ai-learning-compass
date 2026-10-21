@@ -15,7 +15,7 @@ from progress_store import StudyRepository, TaskProgress
 from desktop.models import DesktopProfile, ModelConnection, new_id, schedule_dates
 
 APP_ID = 0x4C434D50
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 def now() -> str:
@@ -38,6 +38,7 @@ class Store:
         self.backups.mkdir(exist_ok=True)
         self._backed_up_date = ""
         self._budget_local = threading.local()
+        self._read_local = threading.local()
         self._initialize()
 
     def connect(self):
@@ -49,9 +50,9 @@ class Store:
     def _initialize(self):
         with closing(self.connect()) as probe:
             old_version = probe.execute("PRAGMA user_version").fetchone()[0]
-            if old_version in (1, 2, 3, 4, 5, 6, 7) and probe.execute("PRAGMA application_id").fetchone()[0] != APP_ID:
+            if old_version in range(1, SCHEMA_VERSION + 1) and probe.execute("PRAGMA application_id").fetchone()[0] != APP_ID:
                 raise ValueError("不是学习罗盘桌面数据库")
-        if old_version in (1, 2, 3, 4, 5, 6):
+        if old_version in range(1, SCHEMA_VERSION):
             self.backup_to(self.backups / f"before-schema-{SCHEMA_VERSION}-{new_id()}.sqlite3")
             staged_path = self.directory / f"upgrade-{new_id()}.sqlite3"
             try:
@@ -68,7 +69,9 @@ class Store:
                         self._upgrade_v5(staged)
                     if old_version <= 5:
                         self._upgrade_v6(staged)
-                    self._upgrade_v7(staged)
+                    if old_version <= 6:
+                        self._upgrade_v7(staged)
+                    self._upgrade_v8(staged)
                 self.inspect_backup(staged_path)
                 os.replace(staged_path, self.path)
             finally:
@@ -126,6 +129,7 @@ class Store:
             self._upgrade_v5(c)
             self._upgrade_v6(c)
             self._upgrade_v7(c)
+            self._upgrade_v8(c)
         c.close()
 
     @staticmethod
@@ -173,10 +177,32 @@ class Store:
         c.execute("PRAGMA user_version=4")
 
     def read(self, sql, params=()):
+        scope = getattr(self._read_local, 'scope', None)
+        if scope is not None:
+            connection, cache = scope
+            key = (sql, tuple(params))
+            if key not in cache:
+                cache[key] = [dict(row) for row in connection.execute(sql, params).fetchall()]
+            return [dict(row) for row in cache[key]]
         c = self.connect()
         try:
             return [dict(row) for row in c.execute(sql, params).fetchall()]
         finally:
+            c.close()
+
+    @contextmanager
+    def read_scope(self):
+        """Share only a synchronous UI read snapshot, never across a write/event loop."""
+        if getattr(self._read_local, 'scope', None) is not None:
+            yield
+            return
+        c = self.connect()
+        try:
+            c.execute('BEGIN')
+            self._read_local.scope = (c, {})
+            yield
+        finally:
+            self._read_local.scope = None
             c.close()
 
     @staticmethod
@@ -236,6 +262,13 @@ class Store:
                   expires_at TEXT NOT NULL, snapshot_json TEXT NOT NULL)""")
         c.execute("PRAGMA user_version=7")
 
+    @staticmethod
+    def _upgrade_v8(c):
+        if not c.in_transaction:
+            c.execute('BEGIN IMMEDIATE')
+        from desktop.organizer import upgrade
+        upgrade(c)
+
     def _daily_backup(self):
         today = date.today().isoformat()
         if today == self._backed_up_date:
@@ -249,6 +282,8 @@ class Store:
 
     @contextmanager
     def write(self, *, check_budget=True, confirm_plan_limits=False):
+        if getattr(self._read_local, 'scope', None) is not None:
+            raise ValueError('只读刷新尚未结束，请稍后再保存')
         self._daily_backup()
         c = self.connect()
         try:
@@ -448,7 +483,7 @@ class Store:
                          (int(archived), f"%{search}%", f"%{search}%"))
 
     def tasks(self, plan_id=None, *, due=None):
-        sql = "SELECT t.*,COALESCE(p.title,'独立任务') AS plan_title,COALESCE(p.archived,0) AS archived FROM tasks t LEFT JOIN plans p ON p.id=t.plan_id WHERE 1=1"
+        sql = "SELECT t.*,COALESCE(p.title,'独立任务') AS plan_title,COALESCE(p.archived,0) AS archived,COALESCE(a.priority,0) AS priority,COALESCE(a.pinned,0) AS pinned,a.focus_date FROM tasks t LEFT JOIN plans p ON p.id=t.plan_id LEFT JOIN task_attention a ON a.task_id=t.id WHERE 1=1"
         params = []
         if plan_id == "__standalone__":
             sql += " AND t.plan_id IS NULL"
@@ -571,7 +606,7 @@ class Store:
                 self._version(c, task["plan_id"], "删除手动任务", before)
 
     def update_task(self, task_id, payload: DailyTask, due_date: str, remind_at: str | None,
-                    status: str, manual_minutes: int, difficulty, note: str, ai_locked=None, confirm_limits=False):
+                    status: str, manual_minutes: int, difficulty, note: str, ai_locked=None, confirm_limits=False, attention=None):
         task = next(iter(self.read("SELECT * FROM tasks WHERE id=?", (task_id,))), None)
         if not task:
             raise ValueError("找不到这项任务")
@@ -589,6 +624,10 @@ class Store:
                 raise ValueError("手动任务不使用学习日编号")
             with self.write(confirm_plan_limits=confirm_limits) as c:
                 before = self._snapshot_in_transaction(c, task["plan_id"]) if task["plan_id"] else None
+                from desktop.organizer import _check_manual_balance, attention_in
+                _check_manual_balance(c, task_id, manual_minutes * 60)
+                if attention is not None:
+                    attention_in(c, task_id, **attention)
                 c.execute("""UPDATE tasks SET payload_json=?,due_date=?,remind_at=?,status=?,manual_seconds=?,
                     difficulty=?,note=? WHERE id=?""", (payload.model_dump_json(), due_date, remind_at, status,
                     manual_minutes * 60, difficulty, note, task_id))
@@ -621,6 +660,10 @@ class Store:
             raise ValueError("改期后超过这份计划的每周时间上限，请换一周安排")
         with self.write(confirm_plan_limits=confirm_limits) as c:
             before = self._snapshot_in_transaction(c, task["plan_id"])
+            from desktop.organizer import _check_manual_balance, attention_in
+            _check_manual_balance(c, task_id, manual_minutes * 60)
+            if attention is not None:
+                attention_in(c, task_id, **attention)
             c.execute("""UPDATE tasks SET payload_json=?,due_date=?,remind_at=?,status=?,manual_seconds=?,
                 difficulty=?,note=?,user_modified=MAX(user_modified,?),ai_locked=MAX(ai_locked,?) WHERE id=?""",
                       (payload.model_dump_json(), due_date, remind_at, status, manual_minutes * 60,
@@ -653,11 +696,11 @@ class Store:
 
     @staticmethod
     def _snapshot_in_transaction(c, plan_id):
-        result = {"format": "learning-compass-plan", "version": 6}
-        for table in ("plans", "weeks", "tasks", "reviews", "generation_events", "focus_sessions", "notifications", "plan_briefs", "plan_schedules", "pause_history", "task_details", "task_series", "series_tasks"):
+        result = {"format": "learning-compass-plan", "version": 7}
+        for table in ("plans", "weeks", "tasks", "reviews", "generation_events", "focus_sessions", "notifications", "plan_briefs", "plan_schedules", "pause_history", "task_details", "task_series", "series_tasks", "task_attention", "study_events"):
             if table == "plans":
                 rows = c.execute("SELECT * FROM plans WHERE id=?", (plan_id,)).fetchall()
-            elif table in {"focus_sessions", "notifications", "task_details"}:
+            elif table in {"focus_sessions", "notifications", "task_details", "task_attention", "study_events"}:
                 rows = c.execute(f"SELECT * FROM {table} WHERE task_id IN (SELECT id FROM tasks WHERE plan_id=?)", (plan_id,)).fetchall()
             elif table == "series_tasks":
                 rows = c.execute("SELECT * FROM series_tasks WHERE series_id IN (SELECT id FROM task_series WHERE plan_id=?)", (plan_id,)).fetchall()
@@ -821,7 +864,9 @@ class Store:
             snapshot["version"] = 5
         if snapshot.get("version") == 5:
             snapshot.update(version=6, task_details=[], task_series=[], series_tasks=[])
-        if snapshot.get("version") != 6:
+        if snapshot.get("version") == 6:
+            snapshot.update(version=7, task_attention=[], study_events=[])
+        if snapshot.get("version") != 7:
             raise ValueError("计划文件版本不受支持")
         return snapshot
 
@@ -845,16 +890,16 @@ class Store:
                         row["id"] = series_ids[row["id"]]
                     elif table in {"generation_events", "pause_history"}:
                         row["id"] = new_id()
-            for table in ("focus_sessions", "notifications", "task_details"):
+            for table in ("focus_sessions", "notifications", "task_details", "task_attention", "study_events"):
                 for row in snapshot[table]:
                     row["task_id"] = task_ids[row["task_id"]]
-                    if table == "focus_sessions":
+                    if table in {"focus_sessions", "study_events"}:
                         row["id"] = new_id()
             for row in snapshot["series_tasks"]:
                 row["series_id"] = series_ids[row["series_id"]]
                 if row["task_id"] is not None:
                     row["task_id"] = task_ids[row["task_id"]]
-        for table in ("plans", "weeks", "tasks", "reviews", "generation_events", "focus_sessions", "notifications", "plan_briefs", "plan_schedules", "pause_history", "task_details", "task_series", "series_tasks"):
+        for table in ("plans", "weeks", "tasks", "reviews", "generation_events", "focus_sessions", "notifications", "plan_briefs", "plan_schedules", "pause_history", "task_details", "task_series", "series_tasks", "task_attention", "study_events"):
             for row in snapshot[table]:
                 if table == "plan_briefs":
                     from desktop.planning import validate_brief
@@ -874,7 +919,7 @@ class Store:
             data = json.loads(content.decode("utf-8-sig"))
             if data.get("version") == 1:
                 return self._import_legacy_json(data, start, weekdays)
-            if data.get("format") != "learning-compass-plan" or data.get("version") not in {2, 3, 4, 5, 6} or len(data["plans"]) != 1:
+            if data.get("format") != "learning-compass-plan" or data.get("version") not in {2, 3, 4, 5, 6, 7} or len(data["plans"]) != 1:
                 raise ValueError("不是有效的学习罗盘计划文件")
             # 同一事务中验证领域约束；任何失败都会回滚整份导入。
             with self.write(confirm_plan_limits=confirm_limits) as c:
@@ -906,6 +951,8 @@ class Store:
                     TaskProgress(status=task["status"], actual_minutes=min(1440, task["manual_seconds"] // 60), difficulty=task["difficulty"], note=task["note"])
                     if task["manual_seconds"] < 0 or task["focus_seconds"] < 0:
                         raise ValueError("用时不能为负数")
+                from desktop.organizer import validate_database
+                validate_database(c)
                 self._version(c, plan_id, "导入计划", {})
             return plan_id
         except (ValueError, TypeError, KeyError, IndexError, sqlite3.Error) as error:
@@ -1075,7 +1122,7 @@ class Store:
             c.execute("DELETE FROM plans WHERE id=?", (plan_id,))
             self._insert_snapshot(c, json.loads(rows[0]["snapshot_json"]))
 
-    def record_focus(self, session_id, task_id, seconds, started_at):
+    def record_focus(self, session_id, task_id, seconds, started_at, *, day_seconds=None):
         seconds = max(0, int(seconds))
         with self.write() as c:
             row = c.execute("SELECT * FROM focus_sessions WHERE id=?", (session_id,)).fetchone()
@@ -1084,6 +1131,20 @@ class Store:
             previous = row["seconds"] if row else 0
             if seconds < previous:
                 raise ValueError("累计专注时间不能倒退")
+            if day_seconds is not None:
+                if seconds == previous and row:
+                    prefix=f'focus/{session_id}/{seconds}/'
+                    saved = {r['occurred_on']: r['seconds'] for r in c.execute(
+                        'SELECT occurred_on,seconds FROM study_events WHERE substr(id,1,?)=?', (len(prefix),prefix))}
+                    if saved == {k:v for k,v in day_seconds.items() if v}:
+                        return  # Retrying the same checkpoint must not duplicate dated evidence.
+                if sum(day_seconds.values()) != seconds - previous or any(type(v) is not int or v < 0 for v in day_seconds.values()):
+                    raise ValueError('专注日期分段与累计用时不一致')
+                for day, amount in day_seconds.items():
+                    date.fromisoformat(day)
+                    if amount:
+                        c.execute('INSERT INTO study_events VALUES (?,?,?,?,?,?)',
+                            (f'focus/{session_id}/{seconds}/{day}', task_id, day, amount, 'focus', now()))
             c.execute("INSERT INTO focus_sessions VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET seconds=excluded.seconds,updated_at=excluded.updated_at",
                       (session_id, task_id, seconds, started_at, now()))
             if task_id:
@@ -1138,7 +1199,7 @@ class Store:
         c.row_factory = sqlite3.Row
         try:
             version = c.execute("PRAGMA user_version").fetchone()[0]
-            if c.execute("PRAGMA application_id").fetchone()[0] != APP_ID or version not in {1, 2, 3, 4, 5, 6, SCHEMA_VERSION}:
+            if c.execute("PRAGMA application_id").fetchone()[0] != APP_ID or version not in range(1, SCHEMA_VERSION + 1):
                 raise ValueError("不是当前版本的学习罗盘备份")
             if c.execute("PRAGMA integrity_check").fetchone()[0] != "ok" or c.execute("PRAGMA foreign_key_check").fetchall():
                 raise ValueError("备份不完整或已损坏")
@@ -1173,6 +1234,9 @@ class Store:
                 from desktop.trash import validate_entry
                 for entry in c.execute("SELECT * FROM trash"):
                     validate_entry(c, dict(entry))
+            if version >= 8:
+                from desktop.organizer import validate_database
+                validate_database(c)
             for row in c.execute("SELECT data_json FROM connections"):
                 ModelConnection.model_validate_json(row["data_json"])
             if version >= 4:
@@ -1248,6 +1312,8 @@ class Store:
                     self._upgrade_v6(staged)
                 if staged.execute("PRAGMA user_version").fetchone()[0] == 6:
                     self._upgrade_v7(staged)
+                if staged.execute("PRAGMA user_version").fetchone()[0] == 7:
+                    self._upgrade_v8(staged)
             self.inspect_backup(temporary)
             os.replace(temporary, self.path)
         finally:
