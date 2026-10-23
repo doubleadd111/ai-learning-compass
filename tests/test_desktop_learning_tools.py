@@ -160,7 +160,7 @@ def test_series_plan_confirmation_and_history_export_roundtrip(tmp_path):
             tools.apply_series(s, p)
     tools.save_details(s, p.task_ids[0], data(done=True), token(s))
     exported = s.export_plan(pid)
-    assert json.loads(exported)['version'] == 7
+    assert json.loads(exported)['version'] ==9
     copy = s.import_plan(exported, date(2026,1,1), confirm_limits=True)
     assert len(s.tasks(copy)) == len(s.tasks(pid))
     assert len(tools.series_entries(s)) == 2
@@ -191,14 +191,14 @@ def test_schema5_staging_migration_and_backup_restore(tmp_path):
     before = s.read('SELECT * FROM tasks')
     reopened = Store(s.directory)
     assert reopened.tasks()[0]['id'] == tid
-    old = next(reopened.backups.glob('before-schema-8-*.sqlite3'))
+    old = next(reopened.backups.glob('before-schema-10-*.sqlite3'))
     with closing(sqlite3.connect(old)) as backup:
         backup.row_factory = sqlite3.Row
         assert [dict(r) for r in backup.execute('SELECT * FROM tasks')] == before
         assert backup.execute('PRAGMA user_version').fetchone()[0] == 5
     target = Store(tmp_path / 'restored')
     target.restore(old)
-    assert target.read('PRAGMA user_version')[0]['user_version'] == SCHEMA_VERSION == 8
+    assert target.read('PRAGMA user_version')[0]['user_version'] == SCHEMA_VERSION == 10
     assert target.tasks()[0]['id'] == tid
 
 

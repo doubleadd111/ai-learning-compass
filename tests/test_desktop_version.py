@@ -9,7 +9,7 @@ BASE_VERSION = '.'.join(VERSION.split('.')[:3])
 
 def test_patch_version_and_installer_are_consistent():
     root = Path(__file__).resolve().parents[1]
-    assert VERSION == DISPLAY_VERSION == "2026.10.13"
+    assert VERSION == DISPLAY_VERSION == "2026.10.14"
     assert f'#define AppVersion "{BASE_VERSION}"' in (root / "packaging" / "installer.iss").read_text(encoding="utf-8")
     log = (root / "CHANGELOG.md").read_text(encoding="utf-8")
     legacy = (root / "CHANGELOG-legacy.md").read_text(encoding="utf-8")
@@ -26,6 +26,7 @@ def test_local_build_does_not_create_release_artifacts(tmp_path, monkeypatch):
     test_version = BASE_VERSION + '.2'
     monkeypatch.setattr(build_desktop, 'VERSION', test_version)
     for path, content in [("docs/desktop-guide.md", f"适用版本：`{test_version}`"), ("THIRD_PARTY_NOTICES.md", "licenses"),
+                          ('LICENSE', 'project license'), ('COPYRIGHT', 'project copyright'),
                           ('CHANGELOG-legacy.md', 'legacy log'), ('docs/versioning.md', 'version rules'),
                           ('docs/desktop-verification.md', 'verification'), ('docs/releases/example.md', 'release notes'),
                           ("CHANGELOG.md", "history"), ("dist/LearningCompass/LearningCompass.exe", "test exe")]:
@@ -48,7 +49,7 @@ def test_local_build_does_not_create_release_artifacts(tmp_path, monkeypatch):
     manifest = json.loads((tmp_path / 'build/local-test-manifest.json').read_text(encoding='utf-8'))
     assert manifest['version'] == test_version and manifest['kind'] == 'local-test'
     assert json.loads((tmp_path / 'dist/LearningCompass/build-info.json').read_text(encoding='utf-8'))['version'] == test_version
-    for relative in ('CHANGELOG-legacy.md', 'CHANGELOG.md', 'docs/versioning.md', 'docs/desktop-guide.md', 'docs/desktop-verification.md', 'docs/releases/example.md'):
+    for relative in ('LICENSE', 'COPYRIGHT', 'CHANGELOG-legacy.md', 'CHANGELOG.md', 'docs/versioning.md', 'docs/desktop-guide.md', 'docs/desktop-verification.md', 'docs/releases/example.md'):
         assert (tmp_path/'dist/LearningCompass'/relative).read_bytes() == (tmp_path/relative).read_bytes()
 
 
@@ -60,6 +61,7 @@ def test_release_manifest_identifies_actual_executable(tmp_path, monkeypatch):
     monkeypatch.setattr(build_desktop, 'VERSION', BASE_VERSION)
     exe = tmp_path / "dist/LearningCompass/LearningCompass.exe"
     for path, content in [("docs/desktop-guide.md", f"适用版本：`{BASE_VERSION}`"), ("THIRD_PARTY_NOTICES.md", "licenses"),
+                          ('LICENSE', 'project license'), ('COPYRIGHT', 'project copyright'),
                           ('CHANGELOG-legacy.md', 'legacy log'), ('docs/versioning.md', 'version rules'),
                           ('docs/desktop-verification.md', 'verification'),
                           ("CHANGELOG.md", "history"), ("dist/LearningCompass/LearningCompass.exe", "fake exe"),
@@ -81,6 +83,10 @@ def test_release_manifest_identifies_actual_executable(tmp_path, monkeypatch):
     assert manifest["kind"] == "release" and manifest["version"] == BASE_VERSION
     assert manifest["exe_sha256"] == hashlib.sha256(exe.read_bytes()).hexdigest()
     assert len(manifest["artifacts"]) == 2
+    import zipfile
+    with zipfile.ZipFile(tmp_path/f'release/LearningCompass-{BASE_VERSION}-windows-x64-portable.zip') as archive:
+        for name in ('LICENSE', 'COPYRIGHT'):
+            assert archive.read('LearningCompass/'+name) == (tmp_path/name).read_bytes()
 
 
 def test_installer_qa_has_separate_identity_and_no_real_shortcuts():
@@ -197,3 +203,14 @@ def test_release_13_has_merged_test_history_and_matching_user_docs():
     assert '2026.10.13-windows-x64-setup.exe' in notes
     assert '2026.10.13-windows-x64-portable.zip' in notes
     assert '2026.10.13' in (root/'README.md').read_text(encoding='utf-8')
+
+
+def test_release_14_has_exact_source_upgrade_and_acceptance_boundaries():
+    root=Path(__file__).resolve().parents[1];log=(root/'CHANGELOG.md').read_text(encoding='utf-8')
+    assert log.index('## 2026.10.14 ·')<log.index('## 2026.10.13 ·')
+    assert '测试迭代（均已合并至2026.10.14）' in log
+    notes=(root/'docs/releases/2026.10.14.md').read_text(encoding='utf-8')
+    for phrase in ('schema10','格式9','GPL-3.0-only','2026.10.13.1','人工验收','自动真实鼠标','未代码签名','升级前数据库备份','不读取文件正文'):
+        assert phrase in notes,phrase
+    assert '2026.10.14-windows-x64-setup.exe' in notes and '2026.10.14-windows-x64-portable.zip' in notes
+    assert '2026.10.14.1' in (root/'docs/versioning.md').read_text(encoding='utf-8')

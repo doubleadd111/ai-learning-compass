@@ -1,7 +1,8 @@
 import threading
 
 from PySide6.QtCore import QObject, QRunnable, Signal
-from desktop.gateway import Cancelled, GatewayError
+from desktop.network import Cancelled
+from desktop.gateway_loader import GatewayError
 
 
 class Signals(QObject):

@@ -340,6 +340,17 @@ class TaskDialog(QDialog):
             return
         if self.store is not None:
             from desktop.schedule_ui import budget_action
+            if values['due_date'] != self.row['due_date']:
+                from desktop.workflow import dependency_warnings
+                from contextlib import closing
+                from desktop.confirmations import ConfirmationDialog,text_label
+                with closing(self.store.connect()) as c:
+                    warnings=dependency_warnings(c,dates={self.row['id']:values['due_date']})
+                if warnings:
+                    box=ConfirmationDialog('任务顺序需要注意','本次改期可能早于前置任务。没有自动修改其他任务。',self,confirm='仍然使用此日期')
+                    for warning in warnings:box.content.addWidget(text_label(warning))
+                    box.content.addStretch()
+                    if box.exec()!=QDialog.DialogCode.Accepted:return
             def save():
                 current = next((t for t in self.store.tasks() if t['id'] == self.row['id']), None)
                 if current is None:

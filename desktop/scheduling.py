@@ -36,6 +36,9 @@ def fingerprint(c):
     identity = {k: focus.get(k) for k in ("task_id", "session_id", "phase")}
     tasks = [tuple(r) for r in c.execute("SELECT * FROM tasks ORDER BY id")]
     extras = [[tuple(r) for r in c.execute(f"SELECT * FROM {table} ORDER BY 1,2")] for table in ("task_details", "task_series", "series_tasks", "task_attention", "study_events", "captures")]
+    for table in ('task_dependencies','reminder_controls','task_resources'):
+        if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():
+            extras.append([tuple(r) for r in c.execute(f'SELECT * FROM {table} ORDER BY 1,2')])
     return hashlib.sha256(json.dumps([plans, schedules, budget[0] if budget else None, identity, tasks, extras],
                                     ensure_ascii=False).encode()).hexdigest()
 
@@ -77,11 +80,13 @@ class BudgetExceeded(ValueError):
 
 def plan_loads(c):
     """Calendar-day/week commitments, including retained and completed tasks."""
-    loads = {}
+    loads, profiles = {}, {}
     for r in c.execute("""SELECT t.plan_id,t.due_date,t.payload_json,p.title,p.profile_json
             FROM tasks t JOIN plans p ON p.id=t.plan_id"""):
         from desktop.models import DesktopProfile
-        profile = DesktopProfile.model_validate_json(r["profile_json"])
+        if r['plan_id'] not in profiles:
+            profiles[r['plan_id']] = DesktopProfile.model_validate_json(r['profile_json'])
+        profile = profiles[r['plan_id']]
         day = date.fromisoformat(r["due_date"])
         for kind, period, limit in (("日", day.isoformat(), profile.minutes_per_day),
                 ("周", (day - timedelta(days=day.weekday())).isoformat(), profile.weekly_minutes)):
@@ -265,6 +270,9 @@ def preview(store, ids, start, *, include_future=False, include_locked=False,
                     period_text = date.fromisocalendar(period[0], period[1], 1).isoformat() if kind == "周" else period
                     if max(0, total - limit) > original.get((p, kind, period_text), {}).get("over", 0):
                         result.warnings.append(plan_limit_text([dict(title=s["title"], kind=kind, period=period_text, total=total, limit=limit, over=total-limit)]))
+    from desktop.workflow import dependency_warnings
+    with closing(store.connect()) as c:
+        result.warnings.extend(dependency_warnings(c,dates={r['id']:r['after'] for r in result.changes}))
     return result
 
 

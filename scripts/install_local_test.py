@@ -86,6 +86,8 @@ def main():
                 original.backup(copy)
         if database_fingerprint(backup) != before:
             raise RuntimeError("数据库备份校验失败，停止更新。")
+        from desktop.backup_metadata import record
+        record(backup, 'before_update', app_version=VERSION, target_version=VERSION)
     # 仅复制到核对过的确切安装目录，不删除学习目录，不改变凭据或卸载登记。
     shutil.copytree(source, target, dirs_exist_ok=True)
     if hashlib.sha256((target / "LearningCompass.exe").read_bytes()).hexdigest() != manifest["exe_sha256"]:

@@ -74,7 +74,7 @@ def test_grouped_actions_keep_every_operation_and_delete_guard(workspace):
     w = workspace
     page = w.stack.widget(1)
     visible_groups = [b for b in page.findChildren(QPushButton) if hasattr(b, 'action_menu')]
-    assert [b.text() for b in visible_groups] == ['任务安排  ▾', '计划管理  ▾', 'AI 辅助  ▾', '历史与数据  ▾']
+    assert [b.text().strip() for b in visible_groups] == ['任务安排', '计划管理', 'AI 辅助', '历史与数据']
     labels = {a.text() for b in visible_groups for a, _ in b.action_menu.items}
     assert {'调整排期', '暂停计划', '重命名计划', '归档／恢复归档', '按此计划创建副本',
             '删除计划…', '任务分组与执行步骤', '添加任务到此计划', 'AI 调整计划',

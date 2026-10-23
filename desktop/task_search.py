@@ -1,6 +1,7 @@
 """Presentation-only task search. No saved task or status is changed."""
 import re
 import unicodedata
+from functools import lru_cache
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QWidget, QLineEdit, QCheckBox, QHBoxLayout, QVBoxLayout, QLabel
 from desktop.controls import SoftComboBox
@@ -8,6 +9,7 @@ from desktop.dialogs import date_edit
 from desktop.task_status import matches_status
 
 
+@lru_cache(maxsize=4096)
 def normalized(text):
     value = unicodedata.normalize('NFKC', text).casefold()
     return re.sub(r'(\d{4})[年/.-](\d{1,2})[月/.-](\d{1,2})日?',

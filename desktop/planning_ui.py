@@ -16,7 +16,7 @@ from shiboken6 import isValid
 
 from desktop.dialogs import PlanDialog, spin
 from desktop.readable_text import ReadableTextEdit
-from desktop.gateway import GatewayError, ModelGateway
+from desktop.gateway_loader import GatewayError, ModelGateway
 from desktop.guide import open_guide
 from desktop.models import DesktopProfile, schedule_dates
 from desktop.planning import PlanningDraft, validate_proposal

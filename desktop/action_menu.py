@@ -1,8 +1,8 @@
 """Categorized action menus on the same rounded surface as other dropdowns."""
-from PySide6.QtCore import Qt, QEvent
-from PySide6.QtGui import QAction
+from PySide6.QtCore import Qt, QEvent,QPointF
+from PySide6.QtGui import QAction,QPainter,QPen,QColor
 from PySide6.QtWidgets import QApplication, QFrame, QVBoxLayout, QPushButton, QLabel, QSizePolicy, QScrollArea, QWidget
-from desktop.controls import PopupSurface
+from desktop.controls import PopupSurface,dropdown_colors
 
 
 class ActionMenu(QFrame):
@@ -119,8 +119,17 @@ class ActionMenu(QFrame):
         super().keyPressEvent(event)
 
 
+class MenuButton(QPushButton):
+    def paintEvent(self,event):
+        super().paintEvent(event)
+        p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        colors=dropdown_colors();p.setPen(QPen(QColor(colors['accent'] if self.underMouse() else colors['muted']),1.5))
+        x,y=self.width()-16,self.height()/2
+        p.drawLine(QPointF(x-3,y-2),QPointF(x,y+1));p.drawLine(QPointF(x,y+1),QPointF(x+3,y-2));p.end()
+
+
 def menu_button(title, entries, parent=None):
-    button = QPushButton(title + '  ▾', parent)
+    button = MenuButton(title + '   ', parent)
     button.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
     menu = ActionMenu(button,scrollable=True)
     button.action_menu = menu

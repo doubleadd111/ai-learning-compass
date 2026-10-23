@@ -161,7 +161,7 @@ def test_frozen_context_check_with_deferred_hidden_pages(host):
     from desktop.task_context_check import check_task_context
     host.defer_hidden=True;host.navigate(0)
     report=check_task_context(host)
-    assert report['success'] and report['actions']==12
+    assert report['success'] and report['actions']==14
 
 
 def test_manual_event_remove_requires_confirmation_and_focus_is_disabled(host,monkeypatch):

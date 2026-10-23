@@ -18,10 +18,7 @@ from desktop.network import (Cancelled, CancellableTransport, RequestControl,
                              TEST_TIMEOUT, MODELS_TIMEOUT, GENERATE_TIMEOUT)
 
 
-class GatewayError(ValueError):
-    def __init__(self, message, provenance=None):
-        super().__init__(message)
-        self.provenance = provenance or {}
+from desktop.gateway_loader import GatewayError
 
 
 def instructions(profile: DesktopProfile):

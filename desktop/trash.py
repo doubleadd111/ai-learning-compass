@@ -17,7 +17,7 @@ from models import DailyTask, validate_plan_for_profile
 from progress_store import TaskProgress
 
 RETENTION_DAYS = 30
-TASK_TABLES = ('tasks', 'focus_sessions', 'notifications', 'task_details', 'series_tasks', 'task_attention', 'study_events')
+TASK_TABLES = ('tasks', 'focus_sessions', 'notifications', 'task_details', 'series_tasks', 'task_attention', 'study_events', 'task_dependencies', 'reminder_controls', 'task_resources')
 
 
 def clock():
@@ -42,6 +42,8 @@ def capture_plan(c, plan_id):
 def capture_task(c, task_id):
     rows = {}
     for table in TASK_TABLES:
+        if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():
+            continue
         rows[table] = [dict(r) for r in c.execute(
             f'SELECT * FROM {table} WHERE {"id" if table == "tasks" else "task_id"}=?', (task_id,))]
     return _save(c, 'task', task_id, json.loads(rows['tasks'][0]['payload_json'])['title'], rows)
@@ -58,7 +60,7 @@ def validate_entry(c, entry):
         tables = TABLES if entry['kind'] == 'plan' else TASK_TABLES if entry['kind'] == 'task' else ()
         tables = tuple(t for t in tables if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (t,)).fetchone())
         from desktop.organizer import TASK_TABLES as ORGANIZER_TABLES
-        for table in ORGANIZER_TABLES:
+        for table in (*ORGANIZER_TABLES, 'task_dependencies','reminder_controls','task_resources'):
             if table in tables:
                 rows.setdefault(table, [])  # Old schema7 snapshots stay unchanged on disk.
         if not tables or set(rows) != set(tables):
@@ -78,7 +80,7 @@ def validate_entry(c, entry):
             series = {r['id'] for r in rows['task_series']}
             for table in tables:
                 for r in rows[table]:
-                    if table in ('plans', 'focus_sessions', 'notifications', 'task_details', 'task_attention', 'study_events'):
+                    if table in ('plans', 'focus_sessions', 'notifications', 'task_details', 'task_attention', 'study_events', 'task_dependencies', 'reminder_controls', 'task_resources'):
                         continue
                     if table == 'series_tasks':
                         if r['series_id'] not in series or (r['task_id'] is not None and r['task_id'] not in ids):
@@ -87,7 +89,7 @@ def validate_entry(c, entry):
                         raise ValueError('回收站包含其他计划资料')
         elif len(tasks) != 1 or tasks[0]['id'] != entry['entity_id'] or tasks[0]['manual'] != 1:
             raise ValueError('回收站只支持单个手动任务')
-        for table in ('focus_sessions', 'notifications', 'task_details', 'task_attention', 'study_events'):
+        for table in ('focus_sessions', 'notifications', 'task_details', 'task_attention', 'study_events', 'task_dependencies', 'reminder_controls', 'task_resources'):
             if any(r['task_id'] not in ids for r in rows.get(table, [])):
                 raise ValueError('回收站包含其他任务记录')
         if not pid and any(r['task_id'] not in ids for r in rows['series_tasks']):
@@ -104,6 +106,8 @@ def validate_entry(c, entry):
             if r['manual'] and (r['week'] != 0 or r['day'] is not None or task.day != 1):
                 raise ValueError('回收站手动任务编号无效')
         from desktop.learning_tools import validate_details
+        from desktop.task_resources import validate_rows as validate_resources
+        validate_resources(rows.get('task_resources',[]),ids)
         for r in rows['task_details']:
             validate_details(dict(stage=r['stage'], steps=json.loads(r['steps_json'])))
         for r in rows['focus_sessions']:
@@ -126,6 +130,9 @@ def validate_entry(c, entry):
                 Store._validate_schedule(scratch, pid)
                 from desktop.learning_tools import validate_database_extras
                 validate_database_extras(scratch)
+                if 'task_dependencies' in tables:
+                    from desktop.workflow import validate
+                    validate(scratch)
                 from desktop.planning import validate_brief
                 for r in rows['plan_briefs']:
                     validate_brief(json.loads(r['data_json']))
@@ -227,6 +234,8 @@ def _restore(c, entry, target_date=None):
                 c.execute('UPDATE series_tasks SET task_id=? WHERE series_id=? AND scheduled_date=?',
                           (link['task_id'], link['series_id'], link['scheduled_date']))
             # A removed rule is never resurrected by restoring one occurrence.
+        from desktop.workflow import validate
+        validate(c)
         if pid:
             if entry['kind'] == 'task':
                 c.execute('UPDATE plan_schedules SET end_date=MAX(end_date,?) WHERE plan_id=?', (rows['tasks'][0]['due_date'], pid))

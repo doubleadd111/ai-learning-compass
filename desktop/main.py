@@ -11,9 +11,7 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from desktop import VERSION
-from desktop.store import Store
 from desktop.theme import apply_theme, compass_icon
-from desktop.window import MainWindow
 
 
 def main():
@@ -54,14 +52,24 @@ def main():
     if sys.platform == "win32":
         import ctypes
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("LearningCompass.Desktop")
+    # Paint feedback before importing the application and constructing its pages.
+    # This cannot eliminate Windows/antivirus time before Python starts.
+    from desktop.startup import StartupWindow
+    startup = None
+    if not (args.minimized or args.smoke_test):
+        apply_theme(app,'system')
+        startup=StartupWindow();startup.show();app.processEvents()
+    from desktop.store import Store
     try:
         store = Store(args.data_dir)
     except (ValueError, OSError) as error:
+        if startup:startup.close()
         QMessageBox.critical(None, "无法打开学习罗盘", str(error))
         return 1
     lock = QLockFile(str(store.directory / "instance.lock"))
     server_name = "LearningCompass-" + hashlib.sha256(str(store.directory.resolve()).encode()).hexdigest()[:20]
     if not args.smoke_test and not lock.tryLock(200):
+        if startup:startup.close()
         socket = QLocalSocket()
         socket.connectToServer(server_name)
         if socket.waitForConnected(1000):
@@ -72,7 +80,11 @@ def main():
     QLocalServer.removeServer(server_name)
     server.listen(server_name)
     apply_theme(app, store.setting("theme", "system"))
+    if startup:
+        startup.message.setText('正在准备任务和学习记录…');app.processEvents()
+    from desktop.window import MainWindow
     window = MainWindow(store, enable_tray=not args.smoke_test, defer_hidden=True)
+    if startup:startup.close()
     def reveal():
         socket = server.nextPendingConnection()
         if socket:
@@ -115,6 +127,10 @@ def main():
                 report['search_scope'] = check_search_scope(window)
                 from desktop.task_context_check import check_task_context
                 report['task_context'] = check_task_context(window)
+                from desktop.workflow_check import check_workflow
+                report['daily_workflow'] = check_workflow(window)
+                from desktop.experience_check import check_experience
+                report['experience'] = check_experience(window)
                 from desktop.trash_check import check_trash
                 report['trash'] = check_trash(window)
                 from desktop.organizer_check import check_organizer

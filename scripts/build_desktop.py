@@ -18,7 +18,7 @@ from desktop import VERSION, guide_matches_version, validate_build_version, wind
 
 
 def source_digest():
-    paths = sorted((ROOT / "desktop").glob("*.py")) + sorted((ROOT / "desktop" / "assets").glob("*.svg")) + [ROOT / name for name in ("docs/desktop-guide.md", "run_desktop.py", "models.py", "planner.py", "curriculum.py", "progress_store.py", "weekly_review.py", "plan_transfer.py")]
+    paths = sorted((ROOT / "desktop").glob("*.py")) + sorted((ROOT / "desktop" / "assets").glob("*.svg")) + [ROOT / name for name in ("LICENSE", "COPYRIGHT", "docs/desktop-guide.md", "run_desktop.py", "models.py", "planner.py", "curriculum.py", "progress_store.py", "weekly_review.py", "plan_transfer.py")]
     digest = hashlib.sha256()
     for path in paths:
         digest.update(path.relative_to(ROOT).as_posix().encode())
@@ -74,11 +74,16 @@ def main():
         numeric = '.'.join(str(part) for part in windows_version(VERSION))
         if f'#define AppVersion "{VERSION}"' not in installer or f'#define AppNumericVersion "{numeric}"' not in installer:
             raise RuntimeError("安装器版本与程序不一致，请先同步AppVersion和AppNumericVersion")
+    for legal_file in ("LICENSE", "COPYRIGHT"):
+        if not (ROOT / legal_file).is_file():
+            raise RuntimeError(f"缺少项目许可文件{legal_file}，停止构建")
     source_hash = source_digest()
     installed = prepare()
     subprocess.run([sys.executable, "-m", "PyInstaller", "--noconfirm", str(ROOT / "packaging" / "desktop.spec")], cwd=ROOT, check=True)
     shutil.copy2(ROOT / "docs" / "desktop-guide.md", ROOT / "dist" / "LearningCompass" / "使用说明.md")
     shutil.copy2(ROOT / "THIRD_PARTY_NOTICES.md", ROOT / "dist" / "LearningCompass" / "THIRD_PARTY_NOTICES.md")
+    for legal_file in ("LICENSE", "COPYRIGHT"):
+        shutil.copy2(ROOT / legal_file, ROOT / "dist/LearningCompass" / legal_file)
     shutil.copy2(ROOT / "CHANGELOG.md", ROOT / "dist" / "LearningCompass" / "更新日志.md")
     # Keep the new changelog's archive/rules links usable in portable packages.
     for relative in ('CHANGELOG.md', 'CHANGELOG-legacy.md', 'docs/versioning.md'):

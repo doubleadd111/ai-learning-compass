@@ -76,7 +76,7 @@ def test_preview_read_only_apply_and_replay_back_preserve_learning(tmp_path):
     assert latest["kind"].startswith("回溯历史")
     assert len(versions(s, pid)) == 4
     assert json.loads(latest["before_json"])["plans"][0]["title"] == "修改后的名称"
-    assert len(list(s.backups.glob("before-history-replay-*"))) == 1
+    assert len(list(s.backups.glob("before-history-replay-*.sqlite3"))) == 1
     history.apply(s, history.preview(s, pid, latest["id"], "before"))
     assert s.get_plan(pid)["title"] == "修改后的名称"
     assert s.tasks(pid)[0]["task"].title == "修改后的任务标题"

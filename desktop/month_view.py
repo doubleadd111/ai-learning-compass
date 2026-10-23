@@ -2,8 +2,8 @@
 from datetime import date, timedelta
 import json
 
-from PySide6.QtCore import Qt, QDate, QMimeData, QPoint
-from PySide6.QtGui import QDrag
+from PySide6.QtCore import Qt, QDate, QMimeData, QPoint, QRectF, QVariantAnimation, QEasingCurve
+from PySide6.QtGui import QDrag, QPainter, QColor, QPen
 from PySide6.QtWidgets import (QApplication, QFrame, QGridLayout, QHBoxLayout,
     QPushButton, QScrollArea, QTextBrowser, QTreeWidgetItem, QVBoxLayout, QWidget, QCheckBox)
 
@@ -17,6 +17,8 @@ from desktop.schedule_ui import budget_action
 from desktop.tool_windows import open_tool
 from shiboken6 import isValid
 from desktop.task_context import bind_task_menu
+from desktop.month_motion import DragOpacity,drag_preview,motion_enabled
+from desktop.controls import dropdown_colors
 
 MIME='application/x-learning-compass-task'
 
@@ -59,6 +61,7 @@ class DragTaskButton(QPushButton):
         super().__init__(task['task'].title[:10]+('…' if len(task['task'].title)>10 else ''))
         self.task=task;self.calendar=calendar;self.origin=None
         self.task_id=task['id']
+        self.drag_opacity=None
         self.setObjectName('monthTask')
         self.setAccessibleName('拖动改期或双击编辑：'+task['task'].title)
         self.clicked.connect(lambda _:calendar.select_day(date.fromisoformat(task['due_date'])))
@@ -75,7 +78,17 @@ class DragTaskButton(QPushButton):
         if self.origin is not None and event.buttons() & Qt.MouseButton.LeftButton and (event.position().toPoint()-self.origin).manhattanLength()>=QApplication.startDragDistance():
             self.origin=None
             data=QMimeData();data.setData(MIME,json.dumps(dict(id=self.task['id'],token=token(self.calendar.store))).encode())
-            drag=QDrag(self);drag.setMimeData(data);drag.exec(Qt.DropAction.MoveAction)
+            drag=QDrag(self);drag.setMimeData(data)
+            pixmap,hotspot=drag_preview(self);drag.setPixmap(pixmap);drag.setHotSpot(hotspot)
+            self.setDown(False)
+            if self.drag_opacity is None:self.drag_opacity=DragOpacity(self)
+            self.drag_opacity.set_dragging(True);self.calendar.drag_source=self
+            try:drag.exec(Qt.DropAction.MoveAction)
+            finally:
+                if isValid(self.calendar):self.calendar.clear_drag_feedback()
+                if isValid(self):
+                    self.setDown(False);self.drag_opacity.set_dragging(False)
+                if isValid(drag):drag.deleteLater()
         else:super().mouseMoveEvent(event)
 
     def mouseDoubleClickEvent(self,event):
@@ -88,20 +101,53 @@ class DropDay(QFrame):
         super().__init__();self.day=day;self.calendar=calendar
         self.setObjectName('weekDay');self.setProperty('currentDay',day==date.today())
         self.setMinimumSize(106,108);self.setAcceptDrops(True)
+        self.drop_progress=0.0;self.drop_active=False
+        self.drop_animation=QVariantAnimation(self);self.drop_animation.setDuration(110)
+        self.drop_animation.setEasingCurve(QEasingCurve.Type.OutCubic);self.drop_animation.valueChanged.connect(self.set_drop_progress)
+
+    def set_drop_progress(self,value):
+        self.drop_progress=float(value);self.update()
+
+    def set_drop_active(self,active,*,immediate=False):
+        self.drop_active=active;self.drop_animation.stop();target=1.0 if active else 0.0
+        if immediate or not motion_enabled():self.set_drop_progress(target);return
+        self.drop_animation.setStartValue(self.drop_progress);self.drop_animation.setEndValue(target);self.drop_animation.start()
+
+    def paintEvent(self,event):
+        super().paintEvent(event)
+        if self.drop_progress<=0:return
+        colors=dropdown_colors();p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        fill=QColor(colors['selected']);fill.setAlpha(round(150*self.drop_progress))
+        border=QColor(colors['accent']);border.setAlpha(round(255*self.drop_progress))
+        p.setBrush(fill);p.setPen(QPen(border,2));p.drawRoundedRect(QRectF(self.rect()).adjusted(2,2,-2,-2),9,9);p.end()
+
+    def accepts_drag(self,event):
+        source=event.source()
+        return event.mimeData().hasFormat(MIME) and isinstance(source,DragTaskButton) and source.calendar.store is self.calendar.store
 
     def dragEnterEvent(self,event):
-        source=event.source()
-        if event.mimeData().hasFormat(MIME) and isinstance(source,DragTaskButton) and source.calendar.store is self.calendar.store:
-            event.acceptProposedAction()
+        if self.accepts_drag(event):
+            self.set_drop_active(True);event.acceptProposedAction()
         else:event.ignore()
 
+    def dragMoveEvent(self,event):
+        if self.accepts_drag(event):
+            if not self.drop_active:self.set_drop_active(True)
+            event.acceptProposedAction()
+        else:self.set_drop_active(False);event.ignore()
+
+    def dragLeaveEvent(self,event):
+        self.set_drop_active(False);event.accept()
+
     def dropEvent(self,event):
-        source=event.source()
-        if not isinstance(source,DragTaskButton) or source.calendar.store is not self.calendar.store:return event.ignore()
+        self.set_drop_active(False,immediate=True)
+        if not self.accepts_drag(event):return event.ignore()
         try:
             raw=bytes(event.mimeData().data(MIME))
             if len(raw)>4096:raise ValueError('拖动资料无效，请重新拖动')
             data=json.loads(raw)
+            if data['id']!=event.source().task_id:raise ValueError('拖动任务已变化，请重新拖动')
+            self.calendar.clear_drag_feedback()
             self.calendar.request_move(data['id'],self.day,data['token'])
             event.acceptProposedAction()
         except (ValueError,KeyError,TypeError):event.ignore()
@@ -111,6 +157,7 @@ class MonthDialog(ToolDialog):
     def __init__(self,store,edit_task,parent=None):
         super().__init__(store,'月视图','拖动任务到日期会先预览；双击任务打开详情。负荷始终统计全部活动任务，不受计划筛选影响。',parent,chapter='schedule')
         self.resize(1060,850);self.edit_task=edit_task;self.month=date.today().replace(day=1);self.selected_day=date.today()
+        self.drag_source=None
         self.heading=text('','brand')
         self.plan=SoftComboBox();self.plan.addItem('全部计划',None);self.plan.addItem('独立任务','__standalone__')
         for p in store.list_plans():self.plan.addItem(p['title'],p['id'])
@@ -130,6 +177,7 @@ class MonthDialog(ToolDialog):
         self.refresh()
 
     def refresh(self,*_):
+        self.clear_drag_feedback(cancel=True)
         self.rows=[r for r in self.store.tasks(self.plan.currentData()) if not r['archived']]
         self.heading.setText(f'{self.month:%Y年%m月}')
         self.loads=self.store.capacity();limits=self.store.setting('daily_budget',[None]*7)
@@ -153,6 +201,18 @@ class MonthDialog(ToolDialog):
         old=self.scroll.takeWidget()
         if old:old.deleteLater()
         self.scroll.setWidget(grid_widget);self.select_day(self.selected_day)
+
+    def clear_drag_feedback(self,*,cancel=False):
+        source=self.drag_source;self.drag_source=None
+        if source is not None and isValid(source):
+            if cancel:QDrag.cancel()
+            if source.drag_opacity is not None:source.drag_opacity.reset()
+            source.setDown(False);source.origin=None
+        for cell in getattr(self,'cells',[]):
+            if isValid(cell):cell.set_drop_active(False,immediate=True)
+
+    def hideEvent(self,event):
+        self.clear_drag_feedback(cancel=True);super().hideEvent(event)
 
     def select_day(self,day):
         self.selected_day=day;self.details.clear()

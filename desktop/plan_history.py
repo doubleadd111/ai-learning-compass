@@ -35,6 +35,8 @@ def arrangement(snapshot):
         weeks=sorted(snapshot["weeks"], key=lambda r: r["number"]),
         schedule=snapshot["plan_schedules"], briefs=snapshot["plan_briefs"],
         attention=sorted(snapshot.get('task_attention',[]),key=lambda r:r['task_id']),
+        dependencies=sorted(snapshot.get('task_dependencies',[]),key=lambda r:(r['task_id'],r['prerequisite_id'])),
+        resources=sorted(snapshot.get('task_resources',[]),key=lambda r:r['task_id']),
         details=sorted([(r['task_id'], r['stage'], [(s['id'], s['title']) for s in json.loads(r['steps_json'])])
                         for r in snapshot.get('task_details', []) if r['stage'] or json.loads(r['steps_json'])]))
 
@@ -123,6 +125,24 @@ def _replay(store, c, plan_id, target):
                 c.execute('DELETE FROM task_attention WHERE task_id=?',(tid,))
             else:
                 attention_in(c,tid,priority=r['priority'],pinned=r['pinned'],focus_date=r['focus_date'])
+    for tid in target_tasks:
+        row=c.execute('SELECT week,manual FROM tasks WHERE id=?',(tid,)).fetchone()
+        if not row or (not row['manual'] and row['week'] in reviewed):continue
+        c.execute('DELETE FROM task_dependencies WHERE task_id=?',(tid,))
+        for edge in target.get('task_dependencies',[]):
+            if edge['task_id']==tid:
+                if not c.execute('SELECT 1 FROM tasks WHERE id=?',(edge['prerequisite_id'],)).fetchone():
+                    raise ValueError('历史中的前置任务不存在，不能静默移除依赖')
+                c.execute('INSERT INTO task_dependencies VALUES (?,?)',(tid,edge['prerequisite_id']))
+    from desktop.workflow import validate
+    validate(c)
+    # Associated files are never modified; replay only their saved references.
+    desired_resources={r['task_id']:r for r in target.get('task_resources',[])}
+    for tid in target_tasks:
+        if not c.execute('SELECT 1 FROM tasks WHERE id=?',(tid,)).fetchone():continue
+        c.execute('DELETE FROM task_resources WHERE task_id=?',(tid,))
+        if tid in desired_resources:
+            c.execute('INSERT INTO task_resources VALUES (?,?)',(tid,desired_resources[tid]['items_json']))
     plan = target["plans"][0]
     c.execute("UPDATE plans SET " + ",".join(f"{k}=?" for k in PLAN_FIELDS) + " WHERE id=?",
               (*[plan[k] for k in PLAN_FIELDS], plan_id))
@@ -227,6 +247,10 @@ def differences(before, after):
         if a != b:
             task = new.get(tid) or old.get(tid)
             result.append(dict(name=(json.loads(task['payload_json'])['title'] if task else '任务') + ' · 阶段与子任务', before=a, after=b))
+    if before.get('task_resources',[]) != after.get('task_resources',[]):
+        def resources_text(snapshot):
+            return '\n'.join(f"{x['title']}：{x['target']}" for r in snapshot.get('task_resources',[]) for x in json.loads(r['items_json'])) or '没有资料或成果关联'
+        result.append(dict(name='资料与成果关联（不修改原文件）',before=resources_text(before),after=resources_text(after)))
     return result
 
 

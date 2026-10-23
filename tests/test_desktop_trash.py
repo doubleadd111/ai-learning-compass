@@ -189,8 +189,8 @@ def test_schema6_migration_and_trash_backup_restart(tmp_path):
         c.execute('PRAGMA user_version=6')
     s = Store(s.directory)
     assert s.export_plan(pid) == original
-    assert s.read('PRAGMA user_version')[0]['user_version'] == SCHEMA_VERSION == 8
-    assert list(s.backups.glob('before-schema-8-*.sqlite3'))
+    assert s.read('PRAGMA user_version')[0]['user_version'] == SCHEMA_VERSION == 10
+    assert list(s.backups.glob('before-schema-10-*.sqlite3'))
     s.delete_plan(pid)
     backup = s.manual_backup()
     target = Store(tmp_path / 'target')

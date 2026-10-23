@@ -1,18 +1,30 @@
 # 学习罗盘 2026.10
 
-当前版本为 **2026.10.13 公开试用版**。合并两次本机测试：新增月视图拖动改期预览、按实际日期的学习日历、快捷录入与待安排收集箱、优先级与今天重点；减少重复刷新，修复长说明阅读和日历时长重叠。[详细发布说明](docs/releases/2026.10.13.md) · [完整更新日志](CHANGELOG.md)。数据库为schema8，旧程序回退必须使用升级前备份。
+当前版本为 **2026.10.14 公开试用版**。合并 `2026.10.13.1`—`.5`：新增批量任务管理、提醒中心、前置任务、统一只读详情、功能与关联文件搜索，改进每日查看、月视图拖动反馈和备份管理。[详细发布说明](docs/releases/2026.10.14.md) · [完整更新日志](CHANGELOG.md)。数据库为schema10、计划JSON9，旧程序回退必须使用升级前备份。
+
+本轮项目原创部分按维护者确认的 `GPL-3.0-only` 分发，安装版和便携版携带许可与版权声明，对应源码以准确版本标签提供。此前公开标签和附件保持原样。程序仍未代码签名，首次启动速度与Windows前台激活可能受系统环境影响；不以关闭安全软件规避提示。
 
 版本采用完整年份：`2026.10.12`是当月第12次可用更新，`2026.10.12.2`是基于它的第2次测试；换月从 `.1` 开始。主日志汇总最终变化，旧过程完整归档；已有发布不重新编号。[版本与日志规范](docs/versioning.md)。
 
 中文 Windows 桌面学习计划软件：使用自己的 DeepSeek／OpenAI 兼容模型生成通用学习计划，记录进度、每周复盘，提供本机长期保存、备份、托盘提醒与专注计时。
 
-**桌面版下载：**[2026.10.13 公开试用版](https://github.com/doubleadd111/ai-learning-compass/releases/tag/2026.10.13) · [桌面版使用指南](docs/desktop-guide.md) · [验收记录](docs/desktop-verification.md)。安装后无需 Python 或 PowerShell。源码入口为 `run_desktop.py`，依赖使用 `requirements-desktop.txt`。
+**桌面版下载：**[2026.10.14 公开试用版](https://github.com/doubleadd111/ai-learning-compass/releases/tag/2026.10.14) · [桌面版使用指南](docs/desktop-guide.md) · [验收记录](docs/desktop-verification.md)。安装后无需 Python 或 PowerShell。源码入口为 `run_desktop.py`，依赖使用 `requirements-desktop.txt`。
 
 桌面版数据固定保存到 `%LOCALAPPDATA%\LearningCompass`，密钥交给 Windows 凭据管理器。软件卸载或升级会保留数据；备份不包含 API Key。
 
 ![桌面计划库](docs/images/desktop-library.png)
 
 桌面版模块关系与验证边界见 [桌面架构](docs/desktop-architecture.md)。网页版入口与依赖保持独立。
+
+## 项目许可证
+
+Copyright (C) 2026 doubleadd111。项目原创部分采用 **GNU GPL第3版，仅限该版本**，SPDX标识为 `GPL-3.0-only`，不是MIT双许可，也不自动授权未来GPL版本。完整条款见[LICENSE](LICENSE)，项目版权及许可声明见[COPYRIGHT](COPYRIGHT)。
+
+允许使用、修改和商用；分发本程序或基于本程序的衍生版本时，应保留相关版权/许可证声明，并按GPLv3要求向接收者提供对应源码，包括必要的构建脚本。仅私下修改使用不要求公开，也不要求把所有源码上传到GitHub给全世界。本项目不提供担保；以上是便于理解的摘要，以许可证全文为准。
+
+第三方依赖保留各自许可，详见[第三方声明](THIRD_PARTY_NOTICES.md)；用户的学习资料、API Key及外部模型返回内容不因使用本软件而自动适用本项目许可证。[许可初步核对与分发检查](docs/licensing.md)记录当前边界与后续检查项。
+
+该许可配置是当前源码的新增内容，不改写此前已发布标签或安装包，也不表示已经获得SignPath批准或代码签名。
 
 ## 原有 Streamlit 网页样例
 

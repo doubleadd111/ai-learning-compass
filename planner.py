@@ -9,8 +9,6 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
 
-from openai import APIConnectionError, APIStatusError, OpenAI, RateLimitError
-
 from curriculum import curriculum_prompt
 from models import LearningProfile, StudyPlan, validate_plan_for_profile
 
@@ -112,6 +110,7 @@ week_number 必须从 1 连续到 {profile.plan_weeks}；每周任务的 day
 
 
 def _get_client() -> OpenAI:
+    from openai import OpenAI
     api_key = os.getenv("DEEPSEEK_API_KEY")
     if not api_key:
         raise PlanGenerationError(
@@ -155,6 +154,7 @@ def generate_study_plan(
     on_metrics=None,
 ) -> StudyPlan:
     """生成计划；格式或时间校验失败时，携带原因自动修正重试一次。"""
+    from openai import APIConnectionError, APIStatusError, RateLimitError
 
     started = perf_counter()
     correction: str | None = None

@@ -150,6 +150,13 @@ def recurrence_dates(rule):
 
 def validate_snapshot_extras(snapshot):
     tids = {r['id'] for r in snapshot['tasks']}
+    from desktop.task_resources import validate_rows as validate_resources
+    validate_resources(snapshot.get('task_resources',[]),tids)
+    edges=snapshot.get('task_dependencies',[])
+    if any(set(r)!={'task_id','prerequisite_id'} or r['task_id'] not in tids or r['prerequisite_id'] not in tids or r['task_id']==r['prerequisite_id'] for r in edges):
+        raise ValueError('前置关系所属任务不一致')
+    if any(r['task_id'] not in tids for r in snapshot.get('reminder_controls',[])):
+        raise ValueError('提醒处理状态所属任务不一致')
     from desktop.organizer import validate_rows
     validate_rows(snapshot, tids)
     tasks = {r['id']: r for r in snapshot['tasks']}

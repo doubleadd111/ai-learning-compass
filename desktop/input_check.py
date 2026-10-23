@@ -28,6 +28,12 @@ def check_input_controls(window):
     forms.append(ScheduleDialog(window.store, window, plan_id=saved['id'], kind='暂停'))
     forms.append(ManualTaskDialog(window.store, window))
     forms.append(PlanHistoryWindow(window, saved['id']))
+    from desktop.task_detail_ui import TaskDetailDialog,ResourceEditor
+    from desktop.global_search_ui import GlobalSearchDialog
+    from desktop.backup_ui import BackupDialog
+    from desktop.backup_space_ui import CleanupDialog
+    forms.extend([TaskDetailDialog(window,saved['tasks'][0]['id']),ResourceEditor(window),
+                  GlobalSearchDialog(window),BackupDialog(window),CleanupDialog(window)])
     from desktop.organizer_ui import QuickAddDialog, AttentionDialog, StudyLogDialog, ActualStatisticsDialog
     from desktop.month_view import MonthDialog, MovePreviewDialog
     tid=saved['tasks'][0]['id']

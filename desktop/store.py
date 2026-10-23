@@ -7,6 +7,7 @@ import sqlite3
 from contextlib import closing, contextmanager
 from datetime import date, datetime, timedelta
 import threading
+from functools import lru_cache
 from pathlib import Path
 from uuid import uuid4
 
@@ -15,7 +16,12 @@ from progress_store import StudyRepository, TaskProgress
 from desktop.models import DesktopProfile, ModelConnection, new_id, schedule_dates
 
 APP_ID = 0x4C434D50
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 10
+
+
+@lru_cache(maxsize=8192)
+def _parsed_task(payload):
+    return DailyTask.model_validate_json(payload)
 
 
 def now() -> str:
@@ -53,10 +59,11 @@ class Store:
             if old_version in range(1, SCHEMA_VERSION + 1) and probe.execute("PRAGMA application_id").fetchone()[0] != APP_ID:
                 raise ValueError("不是学习罗盘桌面数据库")
         if old_version in range(1, SCHEMA_VERSION):
-            self.backup_to(self.backups / f"before-schema-{SCHEMA_VERSION}-{new_id()}.sqlite3")
+            from desktop import VERSION
+            self.backup_to(self.backups / f"before-schema-{SCHEMA_VERSION}-{new_id()}.sqlite3", kind='before_schema', target_version=VERSION)
             staged_path = self.directory / f"upgrade-{new_id()}.sqlite3"
             try:
-                self.backup_to(staged_path)
+                self.backup_to(staged_path, kind=None)
                 with closing(sqlite3.connect(staged_path)) as staged, staged:
                     if old_version == 1:
                         self._upgrade_v2(staged)
@@ -71,7 +78,10 @@ class Store:
                         self._upgrade_v6(staged)
                     if old_version <= 6:
                         self._upgrade_v7(staged)
-                    self._upgrade_v8(staged)
+                    if old_version <= 7:
+                        self._upgrade_v8(staged)
+                    self._upgrade_v9(staged)
+                    self._upgrade_v10(staged)
                 self.inspect_backup(staged_path)
                 os.replace(staged_path, self.path)
             finally:
@@ -130,6 +140,8 @@ class Store:
             self._upgrade_v6(c)
             self._upgrade_v7(c)
             self._upgrade_v8(c)
+            self._upgrade_v9(c)
+            self._upgrade_v10(c)
         c.close()
 
     @staticmethod
@@ -275,10 +287,24 @@ class Store:
             return
         target = self.backups / f"daily-{today}.sqlite3"
         if not target.exists():
-            self.backup_to(target)
+            self.backup_to(target, kind='automatic_daily')
         self._backed_up_date = today
         for old in sorted(self.backups.glob("daily-*.sqlite3"), reverse=True)[30:]:
             old.unlink()
+            old.with_suffix('.meta.json').unlink(missing_ok=True)
+            old.with_suffix('.note.json').unlink(missing_ok=True)
+
+    @staticmethod
+    def _upgrade_v9(c):
+        if not c.in_transaction:
+            c.execute('BEGIN IMMEDIATE')
+        from desktop.workflow import upgrade
+        upgrade(c)
+
+    @staticmethod
+    def _upgrade_v10(c):
+        from desktop.task_resources import upgrade
+        upgrade(c)
 
     @contextmanager
     def write(self, *, check_budget=True, confirm_plan_limits=False):
@@ -482,9 +508,12 @@ class Store:
             FROM plans p WHERE archived=? AND (title LIKE ? OR profile_json LIKE ?) ORDER BY updated_at DESC""",
                          (int(archived), f"%{search}%", f"%{search}%"))
 
-    def tasks(self, plan_id=None, *, due=None):
+    def tasks(self, plan_id=None, *, due=None, task_id=None):
         sql = "SELECT t.*,COALESCE(p.title,'独立任务') AS plan_title,COALESCE(p.archived,0) AS archived,COALESCE(a.priority,0) AS priority,COALESCE(a.pinned,0) AS pinned,a.focus_date FROM tasks t LEFT JOIN plans p ON p.id=t.plan_id LEFT JOIN task_attention a ON a.task_id=t.id WHERE 1=1"
         params = []
+        if task_id:
+            sql += ' AND t.id=?'
+            params.append(task_id)
         if plan_id == "__standalone__":
             sql += " AND t.plan_id IS NULL"
         elif plan_id:
@@ -497,7 +526,10 @@ class Store:
         schedules = {s["plan_id"]: s for s in self.read("SELECT * FROM plan_schedules")}
         focus = self.setting("focus_state", {})
         for row in rows:
-            row["task"] = DailyTask.model_validate_json(row["payload_json"])
+            # Callers may edit view models; never share mutable cached models.
+            # DailyTask contains only immutable scalar fields; shallow copy owns
+            # its attribute dict without the cost of recursively copying strings.
+            row["task"] = _parsed_task(row['payload_json']).model_copy()
             from desktop.scheduling import paused
             row["paused"] = paused(schedules.get(row["plan_id"]))
             row["focus_active"] = row["id"] == focus.get("task_id") and bool(focus.get("session_id") or focus.get("phase") == "break")
@@ -696,11 +728,11 @@ class Store:
 
     @staticmethod
     def _snapshot_in_transaction(c, plan_id):
-        result = {"format": "learning-compass-plan", "version": 7}
-        for table in ("plans", "weeks", "tasks", "reviews", "generation_events", "focus_sessions", "notifications", "plan_briefs", "plan_schedules", "pause_history", "task_details", "task_series", "series_tasks", "task_attention", "study_events"):
+        result = {"format": "learning-compass-plan", "version": 9}
+        for table in ("plans", "weeks", "tasks", "reviews", "generation_events", "focus_sessions", "notifications", "plan_briefs", "plan_schedules", "pause_history", "task_details", "task_series", "series_tasks", "task_attention", "study_events", "task_dependencies", "reminder_controls", "task_resources"):
             if table == "plans":
                 rows = c.execute("SELECT * FROM plans WHERE id=?", (plan_id,)).fetchall()
-            elif table in {"focus_sessions", "notifications", "task_details", "task_attention", "study_events"}:
+            elif table in {"focus_sessions", "notifications", "task_details", "task_attention", "study_events", "task_dependencies", "reminder_controls", "task_resources"}:
                 rows = c.execute(f"SELECT * FROM {table} WHERE task_id IN (SELECT id FROM tasks WHERE plan_id=?)", (plan_id,)).fetchall()
             elif table == "series_tasks":
                 rows = c.execute("SELECT * FROM series_tasks WHERE series_id IN (SELECT id FROM task_series WHERE plan_id=?)", (plan_id,)).fetchall()
@@ -866,7 +898,11 @@ class Store:
             snapshot.update(version=6, task_details=[], task_series=[], series_tasks=[])
         if snapshot.get("version") == 6:
             snapshot.update(version=7, task_attention=[], study_events=[])
-        if snapshot.get("version") != 7:
+        if snapshot.get("version") == 7:
+            snapshot.update(version=8, task_dependencies=[], reminder_controls=[])
+        if snapshot.get("version") == 8:
+            snapshot.update(version=9, task_resources=[])
+        if snapshot.get("version") != 9:
             raise ValueError("计划文件版本不受支持")
         return snapshot
 
@@ -890,16 +926,18 @@ class Store:
                         row["id"] = series_ids[row["id"]]
                     elif table in {"generation_events", "pause_history"}:
                         row["id"] = new_id()
-            for table in ("focus_sessions", "notifications", "task_details", "task_attention", "study_events"):
+            for table in ("focus_sessions", "notifications", "task_details", "task_attention", "study_events", "task_dependencies", "reminder_controls", "task_resources"):
                 for row in snapshot[table]:
                     row["task_id"] = task_ids[row["task_id"]]
+                    if table == 'task_dependencies':
+                        row['prerequisite_id'] = task_ids[row['prerequisite_id']]
                     if table in {"focus_sessions", "study_events"}:
                         row["id"] = new_id()
             for row in snapshot["series_tasks"]:
                 row["series_id"] = series_ids[row["series_id"]]
                 if row["task_id"] is not None:
                     row["task_id"] = task_ids[row["task_id"]]
-        for table in ("plans", "weeks", "tasks", "reviews", "generation_events", "focus_sessions", "notifications", "plan_briefs", "plan_schedules", "pause_history", "task_details", "task_series", "series_tasks", "task_attention", "study_events"):
+        for table in ("plans", "weeks", "tasks", "reviews", "generation_events", "focus_sessions", "notifications", "plan_briefs", "plan_schedules", "pause_history", "task_details", "task_series", "series_tasks", "task_attention", "study_events", "task_dependencies", "reminder_controls", "task_resources"):
             for row in snapshot[table]:
                 if table == "plan_briefs":
                     from desktop.planning import validate_brief
@@ -910,6 +948,8 @@ class Store:
                 if set(columns) != allowed:
                     raise ValueError("备份字段不完整或版本不匹配")
                 c.execute(f"INSERT INTO {table} ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})", list(row.values()))
+        from desktop.workflow import validate
+        validate(c)
         return snapshot["plans"][0]["id"]
 
     def import_plan(self, content: bytes, start: date, weekdays: list[int] | None = None, *, confirm_limits=False):
@@ -919,7 +959,7 @@ class Store:
             data = json.loads(content.decode("utf-8-sig"))
             if data.get("version") == 1:
                 return self._import_legacy_json(data, start, weekdays)
-            if data.get("format") != "learning-compass-plan" or data.get("version") not in {2, 3, 4, 5, 6, 7} or len(data["plans"]) != 1:
+            if data.get("format") != "learning-compass-plan" or data.get("version") not in {2, 3, 4, 5, 6, 7, 8, 9} or len(data["plans"]) != 1:
                 raise ValueError("不是有效的学习罗盘计划文件")
             # 同一事务中验证领域约束；任何失败都会回滚整份导入。
             with self.write(confirm_plan_limits=confirm_limits) as c:
@@ -1158,25 +1198,10 @@ class Store:
                     self._touch(c, task["plan_id"])
 
     def due_reminders(self, moment: datetime):
-        due = []
-        for task in self.tasks(due=moment.date().isoformat()):
-            if not task["remind_at"]:
-                continue
-            scheduled = datetime.fromisoformat(f"{task['due_date']}T{task['remind_at']}")
-            if self.read("SELECT 1 FROM pause_history WHERE plan_id=? AND start_date<=? AND ?<COALESCE(ended_date,resume_date)",
-                         (task["plan_id"], task["due_date"], task["due_date"])):
-                continue
-            fingerprint = scheduled.isoformat()
-            if scheduled <= moment.replace(tzinfo=None) and not self.read("SELECT 1 FROM notifications WHERE task_id=? AND fingerprint=?", (task["id"], fingerprint)):
-                due.append(task)
-        if due:
-            with self.write() as c:
-                for task in due:
-                    fingerprint = datetime.fromisoformat(f"{task['due_date']}T{task['remind_at']}").isoformat()
-                    c.execute("INSERT OR IGNORE INTO notifications VALUES (?,?,?)", (task["id"], fingerprint, now()))
-        return due
+        from desktop.workflow import due_reminders
+        return due_reminders(self, moment)
 
-    def backup_to(self, target: Path):
+    def backup_to(self, target: Path, *, kind='manual', target_version=None):
         target = Path(target)
         if target.resolve() == self.path.resolve():
             raise ValueError("备份文件不能覆盖正在使用的数据文件")
@@ -1188,10 +1213,15 @@ class Store:
         finally:
             source.close()
             destination.close()
+        if kind is not None:
+            from desktop.backup_metadata import record
+            record(target, kind, target_version=target_version)
         return target
 
     def manual_backup(self, prefix="manual"):
-        return self.backup_to(self.backups / f"{prefix}-{datetime.now():%Y%m%d-%H%M%S}-{uuid4().hex[:6]}.sqlite3")
+        from desktop.backup_metadata import kind_from_name
+        path=self.backups / f"{prefix}-{datetime.now():%Y%m%d-%H%M%S}-{uuid4().hex[:6]}.sqlite3"
+        return self.backup_to(path, kind=kind_from_name(path))
 
     @staticmethod
     def inspect_backup(path: Path):
@@ -1237,6 +1267,12 @@ class Store:
             if version >= 8:
                 from desktop.organizer import validate_database
                 validate_database(c)
+            if version >= 9:
+                from desktop.workflow import validate
+                validate(c)
+            if version >= 10:
+                from desktop.task_resources import validate_rows
+                validate_rows([dict(r) for r in c.execute('SELECT * FROM task_resources')], {r[0] for r in c.execute('SELECT id FROM tasks')})
             for row in c.execute("SELECT data_json FROM connections"):
                 ModelConnection.model_validate_json(row["data_json"])
             if version >= 4:
@@ -1314,6 +1350,10 @@ class Store:
                     self._upgrade_v7(staged)
                 if staged.execute("PRAGMA user_version").fetchone()[0] == 7:
                     self._upgrade_v8(staged)
+                if staged.execute("PRAGMA user_version").fetchone()[0] == 8:
+                    self._upgrade_v9(staged)
+                if staged.execute("PRAGMA user_version").fetchone()[0] == 9:
+                    self._upgrade_v10(staged)
             self.inspect_backup(temporary)
             os.replace(temporary, self.path)
         finally:

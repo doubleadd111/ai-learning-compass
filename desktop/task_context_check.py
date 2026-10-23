@@ -36,7 +36,7 @@ def check_task_context(window):
             tree.setCurrentItem(target)
             assert tree.task_context.open(point,keyboard=True)
             menu=tree.task_context.menu
-            assert menu.task_id==created[1] and len(menu.items)==12
+            assert menu.task_id==created[1] and len(menu.items)==14
             entry={a.data():(a,b) for a,b in menu.items}
             assert entry['edit'][0].isEnabled() and not entry['ai_modify'][0].isEnabled()
             entry['note'][1].click()
@@ -53,7 +53,7 @@ def check_task_context(window):
         assert card.task_context.open(card.mapToGlobal(card.rect().center()),keyboard=True)
         card.task_context.menu.hide()
         assert store.read('SELECT * FROM tasks ORDER BY id')==before
-        return dict(five_entry_points=True,actions=12,stable_target=True,guarded_original_editor=True,
+        return dict(five_entry_points=True,actions=14,stable_target=True,guarded_original_editor=True,
                     manual_ai_disabled=True,open_cancel_readonly=True,success=True)
     finally:
         window.tools.close_all()

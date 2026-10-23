@@ -73,7 +73,7 @@ def test_all_legacy_schemas_migrate_preserving_old_columns(tmp_path,schema):
         c.execute(f'PRAGMA user_version={schema}')
     migrated=Store(tmp_path)
     assert migrated.read('SELECT * FROM tasks ORDER BY id')==old
-    assert migrated.read('PRAGMA user_version')[0]['user_version']==8
+    assert migrated.read('PRAGMA user_version')[0]['user_version']==10
     Store.inspect_backup(migrated.path)
 
 
@@ -205,7 +205,7 @@ def test_export_import_trash_and_full_backup_preserve_new_data(tmp_path):
     assert s.read('SELECT * FROM study_events WHERE task_id=?',(tid,))
     backup=s.manual_backup();s.restore(backup)
     assert svc.captures(s)[0]['id']==capture
-    assert SCHEMA_VERSION==8 and s.read('PRAGMA user_version')[0]['user_version']==8
+    assert SCHEMA_VERSION==10 and s.read('PRAGMA user_version')[0]['user_version']==10
 
 
 def test_migration_schema7_preserves_unknown_totals(tmp_path):
@@ -214,7 +214,7 @@ def test_migration_schema7_preserves_unknown_totals(tmp_path):
         for table in ('study_events','task_attention','captures'):c.execute('DROP TABLE '+table)
         c.execute('PRAGMA user_version=7')
     s=Store(tmp_path)
-    assert list(s.backups.glob('before-schema-8-*.sqlite3'))
+    assert list(s.backups.glob('before-schema-10-*.sqlite3'))
     assert svc.statistics(s,date.today(),date.today())['unknown_seconds']==300
     assert not s.read('SELECT * FROM study_events') and s.get_plan(pid)['tasks'][0]['id']==r['id']
 

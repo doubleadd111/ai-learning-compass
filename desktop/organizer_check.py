@@ -11,7 +11,8 @@ from desktop.store import Store, SCHEMA_VERSION
 from desktop import organizer as svc
 from desktop.focus import FocusTimer
 from desktop.organizer_ui import QuickAddDialog, CaptureInboxDialog, ActualStatisticsDialog, token
-from desktop.month_view import MonthDialog, MovePreviewDialog
+from desktop.month_view import MonthDialog, MovePreviewDialog, DragTaskButton
+from desktop.month_motion import drag_preview,DragOpacity
 from models import DailyTask
 
 
@@ -28,6 +29,12 @@ def check_organizer():
         tools=[]
         try:
             month=MonthDialog(store,lambda _:None);tools.append(month)
+            source=month.findChildren(DragTaskButton)[0];pixmap,hotspot=drag_preview(source)
+            assert not pixmap.isNull() and hotspot.x()==22
+            source.drag_opacity=DragOpacity(source);month.drag_source=source
+            month.cells[2].set_drop_active(True,immediate=True);assert month.cells[2].drop_progress==1
+            month.clear_drag_feedback();assert source.drag_opacity.effect.opacity()==1 and not month.cells[2].drop_active
+            assert store.read('SELECT * FROM tasks')==before
             proposal=MovePreviewDialog(store,task,today+timedelta(days=1));tools.append(proposal)
             assert proposal.apply.isEnabled() and store.read('SELECT * FROM tasks')==before
             proposal.reject()
@@ -59,4 +66,4 @@ def check_organizer():
             for form in tools:form.close();form.deleteLater()
         return dict(success=True,schema=SCHEMA_VERSION,capture_stable_id=True,unscheduled_not_load=True,
             drag_preview_cancel_readonly=True,drag_commit=True,actual_dates=True,attention_display_only=True,
-            readable_task_form=True,calendar_disjoint=True,restart_preserved=True)
+            readable_task_form=True,calendar_disjoint=True,restart_preserved=True,drag_visual_readonly=True,drag_feedback_cleanup=True)

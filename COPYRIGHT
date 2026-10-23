@@ -1,0 +1,30 @@
+Learning Compass (学习罗盘)
+Copyright (C) 2026 doubleadd111
+SPDX-License-Identifier: GPL-3.0-only
+
+Unless a file or component states otherwise, the original project code and
+accompanying original documentation and artwork in this repository are
+licensed under version 3 of the GNU General Public License only.
+
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the Free
+Software Foundation, version 3 of the License only.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+more details. A verbatim copy is provided in LICENSE.
+
+Third-party components retain their own copyright and license notices.
+See THIRD_PARTY_NOTICES.md and the licenses directory in packaged builds.
+This notice does not relicense those components, users' personal data, or
+content returned by external model services.
+
+Project source and build instructions:
+https://github.com/doubleadd111/ai-learning-compass
+docs/desktop-guide.md
+
+For a distributed binary, obtain the corresponding source for its exact
+release tag or source commit, including the build scripts. The source
+commit is recorded in build-manifest.json when supplied with a release.
+Do not substitute a different version's source for that binary's source.

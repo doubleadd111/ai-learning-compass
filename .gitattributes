@@ -1,0 +1,2 @@
+# Keep the verbatim GPL text byte-identical across Windows and Unix checkouts.
+/LICENSE text eol=lf
